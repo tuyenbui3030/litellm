@@ -8193,6 +8193,7 @@ class ProviderConfigManager:
                 lambda: litellm.BedrockMantleChatConfig(),
                 False,
             ),
+            LlmProviders.COMMANDCODE: (lambda: litellm.CommandCodeConfig(), False),
             LlmProviders.A2A: (lambda: litellm.A2AConfig(), False),
             LlmProviders.BYTEZ: (lambda: litellm.BytezChatConfig(), False),
             LlmProviders.DATABRICKS: (lambda: litellm.DatabricksConfig(), False),

@@ -188,6 +188,7 @@ from .litellm_core_utils.prompt_templates.factory import (
 )
 from .litellm_core_utils.streaming_chunk_builder_utils import ChunkProcessor
 from .llms.anthropic.chat import AnthropicChatCompletion
+from .llms.commandcode.chat import CommandCodeChatCompletion
 from .llms.azure.audio_transcriptions import AzureAudioTranscription
 from .llms.azure.azure import AzureChatCompletion, _check_dynamic_azure_params
 from .llms.azure.chat.o_series_handler import AzureOpenAIO1ChatCompletion
@@ -287,6 +288,7 @@ sap_gen_ai_hub_chat_completions = GenAIHubOrchestration()
 sap_gen_ai_hub_emb = GenAIHubOrchestration()
 azure_ai_embedding = AzureAIEmbedding()
 anthropic_chat_completions = AnthropicChatCompletion()
+commandcode_chat_completions = CommandCodeChatCompletion()
 azure_anthropic_chat_completions = AzureAnthropicChatCompletion()
 azure_chat_completions = AzureChatCompletion()
 azure_o1_chat_completions = AzureOpenAIO1ChatCompletion()
@@ -2969,6 +2971,44 @@ def completion(  # type: ignore # noqa: PLR0915
                     original_response=response,
                 )
             response = response
+        elif custom_llm_provider == "commandcode":
+            api_key = (
+                api_key
+                or litellm.commandcode_key
+                or litellm.api_key
+                or get_secret("COMMANDCODE_API_KEY")
+            )
+
+            api_base = (
+                api_base
+                or litellm.api_base
+                or get_secret("COMMANDCODE_API_BASE")
+                or "https://api.commandcode.ai"
+            )
+
+            response = commandcode_chat_completions.completion(
+                model=model,
+                messages=messages,
+                api_base=api_base,
+                acompletion=acompletion,
+                model_response=model_response,
+                print_verbose=print_verbose,
+                optional_params=optional_params,
+                litellm_params=litellm_params,
+                encoding=_get_encoding(),
+                api_key=api_key,
+                logging_obj=logging,
+                timeout=timeout,
+                client=client,
+                custom_llm_provider=custom_llm_provider,
+            )
+            if optional_params.get("stream", False) or acompletion is True:
+                ## LOGGING
+                logging.post_call(
+                    input=messages,
+                    api_key=api_key,
+                    original_response=response,
+                )
         elif custom_llm_provider == "nlp_cloud":
             nlp_cloud_key = (
                 api_key
