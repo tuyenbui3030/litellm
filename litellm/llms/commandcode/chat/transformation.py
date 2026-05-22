@@ -42,12 +42,14 @@ class CommandCodeConfig(BaseConfig):
     def get_supported_openai_params(cls, model: str) -> List[str]:
         return [
             "max_tokens",
+            "max_completion_tokens",
             "temperature",
             "top_p",
             "stream",
             "stop",
             "tools",
             "tool_choice",
+            "parallel_tool_calls",
         ]
 
     @classmethod
@@ -61,8 +63,8 @@ class CommandCodeConfig(BaseConfig):
         supported_params = cls.get_supported_openai_params(model)
 
         for param, value in non_default_params.items():
-            if param == "max_tokens" and param in supported_params:
-                optional_params[param] = min(value, 200_000)
+            if param in ("max_tokens", "max_completion_tokens") and "max_tokens" in supported_params:
+                optional_params["max_tokens"] = min(value, 200_000)
             elif param in supported_params:
                 optional_params[param] = value
             elif not drop_params:
@@ -225,11 +227,15 @@ class CommandCodeConfig(BaseConfig):
         if isinstance(content, str):
             return [{"type": "text", "text": content}]
         if isinstance(content, list):
-            parts = [
-                {"type": "text", "text": item.get("text", "")}
-                for item in content
-                if isinstance(item, dict) and item.get("type") == "text"
-            ]
+            parts = []
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                item_type = item.get("type")
+                if item_type == "text":
+                    parts.append({"type": "text", "text": item.get("text", "")})
+                elif item_type == "image_url":
+                    parts.append(item)
             return parts or [{"type": "text", "text": str(content)}]
         return [{"type": "text", "text": str(content)}]
 
@@ -378,9 +384,4 @@ class CommandCodeConfig(BaseConfig):
             return "length"
         return "stop"
 
-    @classmethod
-    def _is_commandcode_model(cls, model: str) -> bool:
-        return (
-            model.startswith("commandcode/")
-            or cls._strip_provider_prefix(model) in cls.MODEL_ALIASES
-        )
+

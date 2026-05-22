@@ -188,6 +188,134 @@ def test_commandcode_transform_response_matches_base_config_signature():
         assert p in params, f"Missing parameter: {p}"
 
 
+def test_commandcode_maps_developer_role_to_system():
+    """CommandCode should map developer role to system role (default BaseConfig behavior)."""
+    config = CommandCodeConfig()
+    messages = [
+        {"role": "developer", "content": "You are a helpful coding assistant."},
+        {"role": "user", "content": "Hello"},
+    ]
+
+    result = config.translate_developer_role_to_system_role(messages)
+
+    assert result[0]["role"] == "system"
+    assert result[0]["content"] == "You are a helpful coding assistant."
+
+
+def test_commandcode_transform_messages_preserves_assistant_tool_calls():
+    """Assistant messages with tool_calls should have tool-call blocks in output."""
+    config = CommandCodeConfig()
+    messages = [
+        {"role": "system", "content": "Be helpful."},
+        {"role": "user", "content": "What files changed?"},
+        {
+            "role": "assistant",
+            "content": "Let me check.",
+            "tool_calls": [
+                {
+                    "id": "call_abc",
+                    "type": "function",
+                    "function": {
+                        "name": "get_changed_files",
+                        "arguments": "{}",
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_abc",
+            "content": "file1.py, file2.py",
+        },
+    ]
+
+    request = config.transform_request(
+        model="commandcode/deepseek-v4-flash",
+        messages=messages,
+        optional_params={},
+        api_base="https://api.commandcode.ai",
+    )
+
+    transformed = request["params"]["messages"]
+    assert len(transformed) == 3  # user, assistant, tool (system extracted)
+
+    assistant_msg = transformed[1]
+    assert assistant_msg["role"] == "assistant"
+    assert any(
+        block["type"] == "tool-call" and block["toolName"] == "get_changed_files"
+        for block in assistant_msg["content"]
+    )
+
+    tool_msg = transformed[2]
+    assert tool_msg["role"] == "tool"
+    assert tool_msg["content"][0]["toolCallId"] == "call_abc"
+
+
+def test_commandcode_transform_messages_with_image_content():
+    """User messages with image_url content should be passed through."""
+    config = CommandCodeConfig()
+    messages = [
+        {"role": "system", "content": "You are helpful."},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "What is in this image?"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/photo.jpg"},
+                },
+            ],
+        },
+    ]
+
+    request = config.transform_request(
+        model="commandcode/deepseek-v4-flash",
+        messages=messages,
+        optional_params={},
+        api_base="https://api.commandcode.ai",
+    )
+
+    user_content = request["params"]["messages"][0]["content"]
+    assert len(user_content) == 2
+    assert user_content[0] == {"type": "text", "text": "What is in this image?"}
+    assert user_content[1]["type"] == "image_url"
+    assert user_content[1]["image_url"]["url"] == "https://example.com/photo.jpg"
+
+
+def test_commandcode_supported_params_are_comprehensive():
+    """Supported params should include max_completion_tokens and other common params."""
+    params = CommandCodeConfig.get_supported_openai_params("deepseek-v4-flash")
+
+    required_params = [
+        "max_tokens",
+        "max_completion_tokens",
+        "temperature",
+        "top_p",
+        "stream",
+        "stop",
+        "tools",
+        "tool_choice",
+        "parallel_tool_calls",
+    ]
+    for p in required_params:
+        assert p in params, f"Missing supported param: {p}"
+
+
+def test_commandcode_tool_message_uses_tool_call_id():
+    """Tool message should correctly use tool_call_id for matching."""
+    message = {
+        "role": "tool",
+        "tool_call_id": "call_xyz",
+        "content": "result data",
+    }
+    result = CommandCodeConfig._transform_tool_message(message, "result data")
+
+    assert result["role"] == "tool"
+    assert result["content"][0]["type"] == "tool-result"
+    assert result["content"][0]["toolCallId"] == "call_xyz"
+    assert result["content"][0]["output"]["value"] == "result data"
+
+
 def test_commandcode_provider_config_is_registered():
     provider_config = litellm.ProviderConfigManager.get_provider_chat_config(
         model="commandcode/deepseek-v4-flash",
