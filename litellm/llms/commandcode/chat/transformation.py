@@ -1,4 +1,6 @@
+import base64
 import json
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional, Union
 
@@ -27,6 +29,33 @@ class CommandCodeConfigError(BaseLLMException):
 
 class CommandCodeConfig(BaseConfig):
     MODEL_ALIASES = {
+        # Anthropic
+        "claude-sonnet-4-6": "claude-sonnet-4-6",
+        "claude-opus-4-7": "claude-opus-4-7",
+        "claude-opus-4-6": "claude-opus-4-6",
+        "claude-haiku-4-5": "claude-haiku-4-5",
+        # OpenAI
+        "gpt-5.5": "gpt-5.5",
+        "gpt-5.4": "gpt-5.4",
+        "gpt-5.3-codex": "gpt-5.3-codex",
+        "gpt-5.4-mini": "gpt-5.4-mini",
+        # Google
+        "google/gemini-3.5-flash": "google/gemini-3.5-flash",
+        "google/gemini-3.1-flash-lite": "google/gemini-3.1-flash-lite",
+        # Open source
+        "moonshotai/Kimi-K2.6": "moonshotai/Kimi-K2.6",
+        "moonshotai/Kimi-K2.5": "moonshotai/Kimi-K2.5",
+        "zai-org/GLM-5.1": "zai-org/GLM-5.1",
+        "zai-org/GLM-5": "zai-org/GLM-5",
+        "MiniMaxAI/MiniMax-M2.7": "MiniMaxAI/MiniMax-M2.7",
+        "MiniMaxAI/MiniMax-M2.5": "MiniMaxAI/MiniMax-M2.5",
+        "deepseek/deepseek-v4-pro": "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-flash": "deepseek/deepseek-v4-flash",
+        "Qwen/Qwen3.6-Max-Preview": "Qwen/Qwen3.6-Max-Preview",
+        "Qwen/Qwen3.6-Plus": "Qwen/Qwen3.6-Plus",
+        "Qwen/Qwen3.7-Max": "Qwen/Qwen3.7-Max",
+        "stepfun/Step-3.5-Flash": "stepfun/Step-3.5-Flash",
+        # Short aliases
         "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
         "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
     }
@@ -235,7 +264,29 @@ class CommandCodeConfig(BaseConfig):
                 if item_type == "text":
                     parts.append({"type": "text", "text": item.get("text", "")})
                 elif item_type == "image_url":
-                    parts.append(item)
+                    image_url = (item.get("image_url") or {}).get("url", "")
+                    if image_url.startswith("data:"):
+                        match = re.match(r"data:([^;]+);base64,(.*)", image_url)
+                        if match:
+                            media_type, data = match.groups()
+                            parts.append({
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": data,
+                                },
+                            })
+                        else:
+                            parts.append({
+                                "type": "image",
+                                "source": {"type": "url", "url": image_url},
+                            })
+                    else:
+                        parts.append({
+                            "type": "image",
+                            "source": {"type": "url", "url": image_url},
+                        })
             return parts or [{"type": "text", "text": str(content)}]
         return [{"type": "text", "text": str(content)}]
 
@@ -296,7 +347,7 @@ class CommandCodeConfig(BaseConfig):
                 {
                     "type": "tool-result",
                     "toolCallId": message.get("tool_call_id", ""),
-                    "toolName": "",
+                    "toolName": message.get("tool_name", ""),
                     "output": {
                         "type": "text" if not message.get("is_error") else "error-text",
                         "value": content if isinstance(content, str) else str(content),
@@ -342,13 +393,33 @@ class CommandCodeConfig(BaseConfig):
         model_response.id = response_data.get("id")
         model_response.created = int(datetime.now().timestamp())
         model_response.model = model
+
+        message: Dict[str, Any] = {
+            "role": "assistant",
+            "content": response_data.get("text", ""),
+        }
+        tool_calls = response_data.get("toolCalls")
+        if tool_calls:
+            message["tool_calls"] = [
+                {
+                    "id": tc.get("toolCallId") or tc.get("id"),
+                    "type": "function",
+                    "function": {
+                        "name": tc.get("toolName", ""),
+                        "arguments": json.dumps(
+                            tc.get("input", {}), ensure_ascii=False
+                        )
+                        if isinstance(tc.get("input"), (dict, list))
+                        else str(tc.get("input", "")),
+                    },
+                }
+                for tc in tool_calls
+            ]
+
         model_response.choices = [
             {
                 "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": response_data.get("text", ""),
-                },
+                "message": message,
                 "finish_reason": self._map_finish_reason(
                     response_data.get("finishReason", "stop")
                 ),

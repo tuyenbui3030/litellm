@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple, Un
 import httpx
 
 import litellm
+from litellm.llms.base_llm.chat.transformation import BaseLLMException
 from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler, HTTPHandler
 from litellm.types.llms.openai import (
     AllMessageValues,
@@ -21,12 +22,19 @@ if TYPE_CHECKING:
     from litellm.litellm_core_utils.streaming_handler import CustomStreamWrapper
 
 
-class CommandCodeError(Exception):
+class CommandCodeError(BaseLLMException):
     def __init__(self, status_code: int, message: str, headers: Optional[dict] = None):
-        self.status_code = status_code
-        self.message = message
+        request = httpx.Request(method="POST", url="https://api.commandcode.ai")
+        response = httpx.Response(
+            status_code=status_code, request=request, headers=headers or {}
+        )
+        super().__init__(
+            status_code=status_code,
+            message=message,
+            request=request,
+            response=response,
+        )
         self.headers = headers
-        super().__init__(self.message)
 
 
 class CommandCodeChatCompletion(BaseLLM):
@@ -54,7 +62,7 @@ class CommandCodeChatCompletion(BaseLLM):
         api_base: Optional[str],
         api_key: Optional[str],
         api_version: Optional[str] = None,
-        model_response: ModelResponse = None,
+        model_response: Optional[ModelResponse] = None,
         print_verbose=None,
         encoding=None,
         logging_obj=None,
