@@ -68,6 +68,7 @@ log "Generated random master key"
 cat > .env <<EOF
 COMMANDCODE_API_KEY=${COMMANDCODE_API_KEY}
 LITELLM_MASTER_KEY=${MASTER_KEY}
+UI_USERNAME=admin
 EOF
 log "Created .env file"
 
@@ -76,10 +77,6 @@ if [ "$PROXY_PORT" != "4000" ]; then
     sed -i "s/-\"4000:4000\"/-\"${PROXY_PORT}:4000\"/" docker-compose.yml
     log "Proxy port set to ${PROXY_PORT}"
 fi
-
-# --- Generate random master key ---
-MASTER_KEY="sk-$(openssl rand -hex 32)"
-log "Generated random master key"
 
 # --- Build & start ---
 log "Building Docker image (this may take a few minutes)..."
@@ -99,7 +96,7 @@ for i in $(seq 1 60); do
         echo ""
         echo "  Dashboard:        http://localhost:${PROXY_PORT}/ui/"
         echo "  API Base:         http://localhost:${PROXY_PORT}"
-        echo "  Username:         admin"
+        echo "  UI Username:      admin"
         echo "  Master Key:       ${MASTER_KEY}"
         echo ""
         echo "============================================"
