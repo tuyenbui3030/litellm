@@ -20,7 +20,7 @@ def test_commandcode_transform_request_maps_model_and_messages():
     assert request["config"]["environment"] == "LiteLLM"
     assert request["params"] == {
         "model": "deepseek/deepseek-v4-flash",
-        "messages": [{"role": "user", "content": [{"type": "text", "text": "Hello"}]}],
+        "messages": [{"role": "user", "content": "Hello"}],
         "tools": [],
         "system": "You are concise.",
         "max_tokens": 100,
@@ -252,7 +252,7 @@ def test_commandcode_transform_messages_preserves_assistant_tool_calls():
 
 
 def test_commandcode_transform_messages_with_image_content():
-    """User messages with image_url content should be passed through."""
+    """User messages with image_url content should be transformed to image blocks."""
     config = CommandCodeConfig()
     messages = [
         {"role": "system", "content": "You are helpful."},
@@ -276,10 +276,12 @@ def test_commandcode_transform_messages_with_image_content():
     )
 
     user_content = request["params"]["messages"][0]["content"]
+    assert isinstance(user_content, list)
     assert len(user_content) == 2
     assert user_content[0] == {"type": "text", "text": "What is in this image?"}
-    assert user_content[1]["type"] == "image_url"
-    assert user_content[1]["image_url"]["url"] == "https://example.com/photo.jpg"
+    assert user_content[1]["type"] == "image"
+    assert user_content[1]["source"]["type"] == "url"
+    assert user_content[1]["source"]["url"] == "https://example.com/photo.jpg"
 
 
 def test_commandcode_supported_params_are_comprehensive():
@@ -323,3 +325,102 @@ def test_commandcode_provider_config_is_registered():
     )
 
     assert isinstance(provider_config, CommandCodeConfig)
+
+
+def test_commandcode_multiturn_conversation_plain_strings():
+    """Multi-turn conversations should have plain string content for user messages."""
+    config = CommandCodeConfig()
+    messages = [
+        {"role": "system", "content": "Be helpful."},
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there!"},
+        {"role": "user", "content": "How are you?"},
+        {"role": "assistant", "content": "I'm great, thanks!"},
+        {"role": "user", "content": "Tell me a joke"},
+    ]
+
+    request = config.transform_request(
+        model="commandcode/deepseek-v4-flash",
+        messages=messages,
+        optional_params={},
+        api_base="https://api.commandcode.ai",
+    )
+
+    transformed = request["params"]["messages"]
+    assert len(transformed) == 5  # 3 user + 2 assistant (system extracted)
+    # All user messages should be plain strings
+    for msg in transformed:
+        if msg["role"] == "user":
+            assert isinstance(msg["content"], str), (
+                f"Expected string content for user message, got {type(msg['content'])}"
+            )
+
+
+def test_commandcode_user_content_base64_image():
+    """User messages with base64 image_url should be transformed to image blocks."""
+    config = CommandCodeConfig()
+    messages = [
+        {"role": "user", "content": [
+            {"type": "text", "text": "Describe this"},
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+            },
+        ]},
+    ]
+
+    request = config.transform_request(
+        model="commandcode/deepseek-v4-flash",
+        messages=messages,
+        optional_params={},
+        api_base="https://api.commandcode.ai",
+    )
+
+    user_content = request["params"]["messages"][0]["content"]
+    assert isinstance(user_content, list)
+    assert len(user_content) == 2
+    assert user_content[0] == {"type": "text", "text": "Describe this"}
+    assert user_content[1]["type"] == "image"
+    assert user_content[1]["source"]["type"] == "base64"
+    assert user_content[1]["source"]["media_type"] == "image/png"
+    assert user_content[1]["source"]["data"] == "iVBORw0KGgo="
+
+
+def test_commandcode_user_content_text_only_list():
+    """User messages with a single text block should return plain string."""
+    config = CommandCodeConfig()
+    messages = [
+        {"role": "user", "content": [{"type": "text", "text": "Hello world"}]},
+    ]
+
+    request = config.transform_request(
+        model="commandcode/deepseek-v4-flash",
+        messages=messages,
+        optional_params={},
+        api_base="https://api.commandcode.ai",
+    )
+
+    user_content = request["params"]["messages"][0]["content"]
+    assert user_content == "Hello world"
+
+
+def test_commandcode_user_content_multiple_text_blocks():
+    """User messages with multiple text blocks should be combined into a string."""
+    config = CommandCodeConfig()
+    messages = [
+        {"role": "user", "content": [
+            {"type": "text", "text": "Part 1"},
+            {"type": "text", "text": "Part 2"},
+        ]},
+    ]
+
+    request = config.transform_request(
+        model="commandcode/deepseek-v4-flash",
+        messages=messages,
+        optional_params={},
+        api_base="https://api.commandcode.ai",
+    )
+
+    user_content = request["params"]["messages"][0]["content"]
+    assert isinstance(user_content, str)
+    assert user_content == "Part 1\nPart 2"

@@ -252,18 +252,30 @@ class CommandCodeConfig(BaseConfig):
         return transformed
 
     @staticmethod
-    def _transform_user_content(content: Any) -> List[Dict[str, Any]]:
+    def _transform_user_content(content: Any) -> Union[str, List[Dict[str, Any]]]:
+        """Transform user message content.
+
+        Returns a plain string for text-only messages (what the CommandCode API
+        expects), or a content-block array only when multimodal elements
+        (images) are present.
+        """
         if isinstance(content, str):
-            return [{"type": "text", "text": content}]
+            return content
         if isinstance(content, list):
-            parts = []
+            parts: List[Dict[str, Any]] = []
+            has_multimodal = False
             for item in content:
                 if not isinstance(item, dict):
                     continue
                 item_type = item.get("type")
                 if item_type == "text":
-                    parts.append({"type": "text", "text": item.get("text", "")})
+                    text = item.get("text", "")
+                    # If the content list has ONLY text items, return plain string
+                    if len(content) == 1:
+                        return text
+                    parts.append({"type": "text", "text": text})
                 elif item_type == "image_url":
+                    has_multimodal = True
                     image_url = (item.get("image_url") or {}).get("url", "")
                     if image_url.startswith("data:"):
                         match = re.match(r"data:([^;]+);base64,(.*)", image_url)
@@ -287,8 +299,19 @@ class CommandCodeConfig(BaseConfig):
                             "type": "image",
                             "source": {"type": "url", "url": image_url},
                         })
-            return parts or [{"type": "text", "text": str(content)}]
-        return [{"type": "text", "text": str(content)}]
+                else:
+                    # Unsupported content type — preserve as text fallback
+                    has_multimodal = True
+                    parts.append({"type": "text", "text": str(item)})
+            if has_multimodal and parts:
+                return parts
+            # No multimodal content or empty parts — return combined text
+            if parts:
+                return "\n".join(
+                    p.get("text", "") for p in parts if p.get("type") == "text"
+                )
+            return str(content)
+        return str(content)
 
     @staticmethod
     def _transform_assistant_content(message: AllMessageValues) -> List[Dict[str, Any]]:

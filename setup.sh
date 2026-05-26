@@ -60,9 +60,19 @@ for cid in $(docker ps -aq --filter "name=litellm" 2>/dev/null); do
     docker rm -f "$cid" 2>/dev/null || true
 done
 
-# --- Generate random master key ---
-MASTER_KEY="sk-$(openssl rand -hex 32)"
-log "Generated random master key"
+# --- Check for existing master key in .env or generate new one ---
+EXISTING_KEY=""
+if [ -f "$PROJECT_DIR/.env" ]; then
+    EXISTING_KEY=$(grep "^LITELLM_MASTER_KEY=" "$PROJECT_DIR/.env" 2>/dev/null | cut -d= -f2-)
+fi
+
+if [ -n "$EXISTING_KEY" ]; then
+    MASTER_KEY="$EXISTING_KEY"
+    log "Reusing existing master key from .env"
+else
+    MASTER_KEY="sk-$(openssl rand -hex 32)"
+    log "Generated new master key"
+fi
 
 # --- Create .env file ---
 cat > .env <<EOF
