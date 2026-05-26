@@ -22,18 +22,6 @@ command -v git >/dev/null 2>&1 || die "git is not installed"
 command -v docker >/dev/null 2>&1 || die "docker is not installed"
 docker compose version >/dev/null 2>&1 || die "docker compose plugin is not installed"
 
-# --- Ask for COMMANDCODE_API_KEY if not set ---
-if [ -z "${COMMANDCODE_API_KEY:-}" ]; then
-    read -r -p "Enter your CommandCode API key: " COMMANDCODE_API_KEY
-    if [ -z "$COMMANDCODE_API_KEY" ]; then
-        die "COMMANDCODE_API_KEY is required"
-    fi
-fi
-
-# --- Ask for proxy port ---
-read -r -p "Proxy port [4000]: " PROXY_PORT
-PROXY_PORT=${PROXY_PORT:-4000}
-
 # --- Clone repo if not already in one ---
 REPO_URL="https://github.com/tuyenbui3030/litellm.git"
 BRANCH="tuyenbui3030/add-commandcode-provider"
@@ -43,7 +31,7 @@ if [ -d "$PROJECT_DIR/.git" ]; then
     log "Stopping existing containers..."
     (cd "$PROJECT_DIR" && docker compose down --remove-orphans 2>/dev/null || true)
 
-    log "Project directory exists, resetting and pulling latest..."
+    log "Pulling latest code..."
     (cd "$PROJECT_DIR" && git fetch origin "$BRANCH" && git checkout -f "$BRANCH" && git reset --hard "origin/$BRANCH")
 else
     log "Cloning repo..."
@@ -55,37 +43,42 @@ cd "$PROJECT_DIR"
 # --- Clean up any leftover containers from previous runs ---
 log "Cleaning up old containers..."
 docker compose down --remove-orphans 2>/dev/null || true
-# Remove any container with 'litellm' in the name that might be from old runs
 for cid in $(docker ps -aq --filter "name=litellm" 2>/dev/null); do
     docker rm -f "$cid" 2>/dev/null || true
 done
 
-# --- Check for existing master key in .env or generate new one ---
-EXISTING_KEY=""
-if [ -f "$PROJECT_DIR/.env" ]; then
-    EXISTING_KEY=$(grep "^LITELLM_MASTER_KEY=" "$PROJECT_DIR/.env" 2>/dev/null | cut -d= -f2-)
-fi
+# --- First-run: create .env if it doesn't exist ---
+if [ ! -f ".env" ]; then
+    # Ask for port (only on first run)
+    read -r -p "Proxy port [4000]: " PROXY_PORT
+    PROXY_PORT=${PROXY_PORT:-4000}
 
-if [ -n "$EXISTING_KEY" ]; then
-    MASTER_KEY="$EXISTING_KEY"
-    log "Reusing existing master key from .env"
-else
+    # Ask for COMMANDCODE_API_KEY if not set
+    if [ -z "${COMMANDCODE_API_KEY:-}" ]; then
+        read -r -p "Enter your CommandCode API key: " COMMANDCODE_API_KEY
+        if [ -z "$COMMANDCODE_API_KEY" ]; then
+            die "COMMANDCODE_API_KEY is required"
+        fi
+    fi
+
+    # Adjust port in docker-compose.yml
+    if [ "$PROXY_PORT" != "4000" ]; then
+        sed -i "s/-\"4000:4000\"/-\"${PROXY_PORT}:4000\"/" docker-compose.yml
+        log "Proxy port set to ${PROXY_PORT}"
+    fi
+
     MASTER_KEY="sk-$(openssl rand -hex 32)"
-    log "Generated new master key"
-fi
-
-# --- Create .env file ---
-cat > .env <<EOF
+    cat > .env <<EOF
 COMMANDCODE_API_KEY=${COMMANDCODE_API_KEY}
 LITELLM_MASTER_KEY=${MASTER_KEY}
 UI_USERNAME=admin
 EOF
-log "Created .env file"
-
-# --- Adjust port in docker-compose.yml ---
-if [ "$PROXY_PORT" != "4000" ]; then
-    sed -i "s/-\"4000:4000\"/-\"${PROXY_PORT}:4000\"/" docker-compose.yml
-    log "Proxy port set to ${PROXY_PORT}"
+    log "Created .env (master key: ${MASTER_KEY})"
+else
+    log ".env already exists — skipping first-run setup"
+    # Parse existing master key for display
+    MASTER_KEY=$(grep "^LITELLM_MASTER_KEY=" .env 2>/dev/null | cut -d= -f2-)
+    PROXY_PORT=$(grep -oP '"(\d+):4000"' docker-compose.yml 2>/dev/null | grep -oP '\d+(?=:4000)' || echo "4000")
 fi
 
 # --- Build & start ---
