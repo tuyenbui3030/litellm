@@ -8282,6 +8282,7 @@ class ProviderConfigManager:
             LlmProviders.COMETAPI: (lambda: litellm.CometAPIConfig(), False),
             LlmProviders.DATAROBOT: (lambda: litellm.DataRobotConfig(), False),
             LlmProviders.GEMINI: (lambda: litellm.GoogleAIStudioGeminiConfig(), False),
+            LlmProviders.GEMINI_CLI: (lambda: litellm.GeminiCLIConfig(), False),
             LlmProviders.AI21: (lambda: litellm.AI21ChatConfig(), False),
             LlmProviders.AI21_CHAT: (lambda: litellm.AI21ChatConfig(), False),
             LlmProviders.AZURE_TEXT: (lambda: litellm.AzureOpenAITextConfig(), False),

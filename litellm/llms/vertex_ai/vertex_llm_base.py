@@ -607,13 +607,13 @@ class VertexBase:
         credentials: Optional[VERTEX_CREDENTIALS_TYPES],
         project_id: Optional[str],
         custom_llm_provider: Literal[
-            "vertex_ai", "vertex_ai_beta", "gemini"
+            "vertex_ai", "vertex_ai_beta", "gemini", "gemini_cli"
         ],  # if it's vertex_ai or gemini (google ai studio)
     ) -> Tuple[str, str]:
         """
         Returns auth token and project id
         """
-        if custom_llm_provider == "gemini":
+        if custom_llm_provider in ["gemini", "gemini_cli"]:
             return "", ""
         else:
             return self.get_access_token(
@@ -713,7 +713,7 @@ class VertexBase:
         vertex_location: Optional[str],
         vertex_credentials: Optional[VERTEX_CREDENTIALS_TYPES],
         stream: Optional[bool],
-        custom_llm_provider: Literal["vertex_ai", "vertex_ai_beta", "gemini"],
+        custom_llm_provider: Literal["vertex_ai", "vertex_ai_beta", "gemini", "gemini_cli"],
         api_base: Optional[str],
         should_use_v1beta1_features: Optional[bool] = False,
         mode: all_gemini_url_modes = "chat",
@@ -728,7 +728,16 @@ class VertexBase:
             token, url
         """
         version: Optional[Literal["v1beta1", "v1"]] = None
-        if custom_llm_provider == "gemini":
+        if custom_llm_provider == "gemini_cli":
+            if not api_base:
+                from ..gemini_cli.common_utils import GEMINI_CLI_API_BASE
+                api_base = GEMINI_CLI_API_BASE
+            endpoint = "streamGenerateContent" if stream else "generateContent"
+            url = f"{api_base}:{endpoint}"
+            if stream:
+                url += "?alt=sse"
+            return auth_header, url
+        elif custom_llm_provider == "gemini":
             if not gemini_api_key:
                 raise ValueError(
                     "Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable."
@@ -1165,13 +1174,13 @@ class VertexBase:
         credentials: Optional[VERTEX_CREDENTIALS_TYPES],
         project_id: Optional[str],
         custom_llm_provider: Literal[
-            "vertex_ai", "vertex_ai_beta", "gemini"
+            "vertex_ai", "vertex_ai_beta", "gemini", "gemini_cli"
         ],  # if it's vertex_ai or gemini (google ai studio)
     ) -> Tuple[str, str]:
         """
         Async version of _ensure_access_token
         """
-        if custom_llm_provider == "gemini":
+        if custom_llm_provider in ["gemini", "gemini_cli"]:
             return "", ""
         else:
             return await self.get_access_token_async(

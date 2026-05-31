@@ -645,6 +645,12 @@ stability_models: Set = set()
 github_copilot_models: Set = set()
 commandcode_models: Set = set()
 chatgpt_models: Set = set()
+gemini_cli_models: Set = {
+    "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-2.5-pro",
+}
 minimax_models: Set = set()
 aws_polly_models: Set = set()
 gigachat_models: Set = set()
@@ -1136,6 +1142,7 @@ models_by_provider: dict = {
     "stability": stability_models,
     "github_copilot": github_copilot_models,
     "chatgpt": chatgpt_models,
+    "gemini_cli": gemini_cli_models,
     "minimax": minimax_models,
     "aws_polly": aws_polly_models,
     "gigachat": gigachat_models,
@@ -1575,6 +1582,9 @@ if TYPE_CHECKING:
     )
     from .llms.gemini.chat.transformation import (
         GoogleAIStudioGeminiConfig as GoogleAIStudioGeminiConfig,
+    )
+    from .llms.gemini_cli.chat.transformation import (
+        GeminiCLIConfig as GeminiCLIConfig,
     )
     from .llms.vertex_ai.vertex_ai_partner_models.anthropic.transformation import (
         VertexAIAnthropicConfig as VertexAIAnthropicConfig,

@@ -178,6 +178,7 @@ LLM_CONFIG_NAMES = (
     "NLPCloudConfig",
     "VertexGeminiConfig",
     "GoogleAIStudioGeminiConfig",
+    "GeminiCLIConfig",
     "VertexAIAnthropicConfig",
     "VertexAILlama3Config",
     "VertexAIAi21Config",
@@ -740,6 +741,10 @@ _LLM_CONFIGS_IMPORT_MAP = {
     "GoogleAIStudioGeminiConfig": (
         ".llms.gemini.chat.transformation",
         "GoogleAIStudioGeminiConfig",
+    ),
+    "GeminiCLIConfig": (
+        ".llms.gemini_cli.chat.transformation",
+        "GeminiCLIConfig",
     ),
     "VertexAIAnthropicConfig": (
         ".llms.vertex_ai.vertex_ai_partner_models.anthropic.transformation",

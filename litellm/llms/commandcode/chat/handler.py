@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple, Un
 import httpx
 
 import litellm
+from litellm.litellm_core_utils.logging_utils import track_llm_api_timing
 from litellm.llms.base_llm.chat.transformation import BaseLLMException
 from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler, HTTPHandler
 from litellm.types.llms.openai import (
@@ -104,6 +105,7 @@ class CommandCodeChatCompletion(BaseLLM):
             client=client,
         )
 
+    @track_llm_api_timing()
     def _completion(
         self,
         model: str,
@@ -173,6 +175,7 @@ class CommandCodeChatCompletion(BaseLLM):
             tool_calls=tool_calls,
         )
 
+    @track_llm_api_timing()
     async def acompletion(
         self,
         model: str,

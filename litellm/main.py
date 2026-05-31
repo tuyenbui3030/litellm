@@ -3527,7 +3527,7 @@ def completion(  # type: ignore # noqa: PLR0915
             raise ValueError(
                 "Palm was decommisioned on October 2024. Please use the `gemini/` route for Gemini Google AI Studio Models. Announcement: https://ai.google.dev/palm_docs/palm?hl=en"
             )
-        elif custom_llm_provider == "vertex_ai_beta" or custom_llm_provider == "gemini":
+        elif custom_llm_provider == "vertex_ai_beta" or custom_llm_provider == "gemini" or custom_llm_provider == "gemini_cli":
             vertex_ai_project = (
                 optional_params.pop("vertex_project", None)
                 or optional_params.pop("vertex_ai_project", None)
@@ -5350,7 +5350,7 @@ def embedding(  # noqa: PLR0915
                 aembedding=aembedding,
                 litellm_params={},
             )
-        elif custom_llm_provider == "gemini":
+        elif custom_llm_provider in ["gemini", "gemini_cli"]:
             gemini_api_key = api_key or get_api_key_from_env() or litellm.api_key
 
             api_base = api_base or litellm.api_base or get_secret_str("GEMINI_API_BASE")
@@ -7205,7 +7205,7 @@ def speech(  # noqa: PLR0915
             api_key=None,  # Vertex AI uses OAuth, not API key
             **kwargs,
         )
-    elif custom_llm_provider == "gemini":
+    elif custom_llm_provider in ["gemini", "gemini_cli"]:
         from .endpoints.speech.speech_to_completion_bridge.handler import (
             speech_to_completion_bridge_handler,
         )

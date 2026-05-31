@@ -2509,7 +2509,14 @@ class VertexGeminiConfig(VertexAIBaseConfig, BaseConfig):
 
         ## RESPONSE OBJECT
         try:
-            completion_response = GenerateContentResponseBody(**raw_response.json())  # type: ignore
+            response_json = raw_response.json()
+            if "response" in response_json and (
+                "candidates" not in response_json or "usageMetadata" not in response_json
+            ):
+                # Handle gemini_cli wrapper: {'response': {candidates: ...}, 'traceId': ...}
+                response_json = response_json["response"]
+
+            completion_response = GenerateContentResponseBody(**response_json)  # type: ignore
         except Exception as e:
             raise VertexAIError(
                 message="Error converting to valid response block={}. File an issue if litellm error - https://github.com/BerriAI/litellm/issues".format(
@@ -2816,7 +2823,7 @@ class VertexLLM(VertexBase):
         self,
         model: str,
         custom_llm_provider: Literal[
-            "vertex_ai", "vertex_ai_beta", "gemini"
+            "vertex_ai", "vertex_ai_beta", "gemini", "gemini_cli"
         ],  # if it's vertex_ai or gemini (google ai studio)
         messages: list,
         model_response: ModelResponse,
@@ -2864,14 +2871,25 @@ class VertexLLM(VertexBase):
             use_psc_endpoint_format=use_psc_endpoint_format,
         )
 
-        headers = VertexGeminiConfig().validate_environment(
-            api_key=auth_header,
-            headers=extra_headers,
-            model=model,
-            messages=messages,
-            optional_params=optional_params,
-            litellm_params=litellm_params,
-        )
+        if custom_llm_provider == "gemini_cli":
+            import litellm
+            headers = litellm.GeminiCLIConfig().validate_environment(
+                api_key=auth_header,
+                headers=extra_headers,
+                model=model,
+                messages=messages,
+                optional_params=optional_params,
+                litellm_params=litellm_params,
+            )
+        else:
+            headers = VertexGeminiConfig().validate_environment(
+                api_key=auth_header,
+                headers=extra_headers,
+                model=model,
+                messages=messages,
+                optional_params=optional_params,
+                litellm_params=litellm_params,
+            )
 
         request_body = await async_transform_request_body(
             **data,
@@ -2922,7 +2940,7 @@ class VertexLLM(VertexBase):
         print_verbose: Callable,
         data: dict,
         custom_llm_provider: Literal[
-            "vertex_ai", "vertex_ai_beta", "gemini"
+            "vertex_ai", "vertex_ai_beta", "gemini", "gemini_cli"
         ],  # if it's vertex_ai or gemini (google ai studio)
         timeout: Optional[Union[float, httpx.Timeout]],
         encoding,
@@ -2966,14 +2984,25 @@ class VertexLLM(VertexBase):
             use_psc_endpoint_format=use_psc_endpoint_format,
         )
 
-        headers = VertexGeminiConfig().validate_environment(
-            api_key=auth_header,
-            headers=extra_headers,
-            model=model,
-            messages=messages,
-            optional_params=optional_params,
-            litellm_params=litellm_params,
-        )
+        if custom_llm_provider == "gemini_cli":
+            import litellm
+            headers = litellm.GeminiCLIConfig().validate_environment(
+                api_key=auth_header,
+                headers=extra_headers,
+                model=model,
+                messages=messages,
+                optional_params=optional_params,
+                litellm_params=litellm_params,
+            )
+        else:
+            headers = VertexGeminiConfig().validate_environment(
+                api_key=auth_header,
+                headers=extra_headers,
+                model=model,
+                messages=messages,
+                optional_params=optional_params,
+                litellm_params=litellm_params,
+            )
 
         request_body = await async_transform_request_body(
             **data,
@@ -3044,7 +3073,7 @@ class VertexLLM(VertexBase):
         model_response: ModelResponse,
         print_verbose: Callable,
         custom_llm_provider: Literal[
-            "vertex_ai", "vertex_ai_beta", "gemini"
+            "vertex_ai", "vertex_ai_beta", "gemini", "gemini_cli"
         ],  # if it's vertex_ai or gemini (google ai studio)
         encoding,
         logging_obj,
@@ -3153,14 +3182,25 @@ class VertexLLM(VertexBase):
             should_use_v1beta1_features=should_use_v1beta1_features,
             use_psc_endpoint_format=use_psc_endpoint_format,
         )
-        headers = VertexGeminiConfig().validate_environment(
-            api_key=auth_header,
-            headers=extra_headers,
-            model=model,
-            messages=messages,
-            optional_params=optional_params,
-            litellm_params=litellm_params,
-        )
+        if custom_llm_provider == "gemini_cli":
+            import litellm
+            headers = litellm.GeminiCLIConfig().validate_environment(
+                api_key=auth_header,
+                headers=extra_headers,
+                model=model,
+                messages=messages,
+                optional_params=optional_params,
+                litellm_params=litellm_params,
+            )
+        else:
+            headers = VertexGeminiConfig().validate_environment(
+                api_key=auth_header,
+                headers=extra_headers,
+                model=model,
+                messages=messages,
+                optional_params=optional_params,
+                litellm_params=litellm_params,
+            )
 
         ## TRANSFORMATION ##
         data = sync_transform_request_body(

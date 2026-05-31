@@ -1150,7 +1150,7 @@ def _transform_request_body(  # noqa: PLR0915
     optional_params = {k: v for k, v in optional_params.items() if k not in remove_keys}
 
     try:
-        if custom_llm_provider == "gemini":
+        if custom_llm_provider in ["gemini", "gemini_cli"]:
             content = litellm.GoogleAIStudioGeminiConfig()._transform_messages(
                 messages=messages, model=model, litellm_params=litellm_params
             )
@@ -1231,9 +1231,17 @@ def _transform_request_body(  # noqa: PLR0915
                 data["serviceTier"] = service_tier
 
         # Only add labels for Vertex AI endpoints (not Google GenAI/AI Studio) and only if non-empty
-        if labels and custom_llm_provider != LlmProviders.GEMINI:
+        if labels and custom_llm_provider not in [LlmProviders.GEMINI, LlmProviders.GEMINI_CLI]:
             data["labels"] = labels
         _pop_and_merge_extra_body(data, optional_params)
+        
+        if custom_llm_provider == LlmProviders.GEMINI_CLI:
+            return {
+                "project": litellm_params.get("gemini_cli_project_id", ""),
+                "model": model,
+                "request": data
+            }
+            
     except Exception as e:
         raise e
 

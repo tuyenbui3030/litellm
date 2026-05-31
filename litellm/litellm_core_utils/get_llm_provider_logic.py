@@ -838,6 +838,9 @@ def _get_openai_compatible_provider_info(  # noqa: PLR0915
         ) = litellm.GithubCopilotConfig()._get_openai_compatible_provider_info(
             model, api_base, api_key, custom_llm_provider
         )
+    elif custom_llm_provider == "gemini_cli":
+        # Handled by Gemini handler using GeminiCLIConfig
+        pass
     elif custom_llm_provider == "chatgpt":
         (
             api_base,

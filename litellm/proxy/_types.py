@@ -638,6 +638,8 @@ class LiteLLMRoutes(enum.Enum):
             "/public/mcp_hub",
             "/public/skill_hub",
             "/public/litellm_model_cost_map",
+            "/gemini_cli/login",
+            "/gemini_cli/callback",
         ]
     )
 
