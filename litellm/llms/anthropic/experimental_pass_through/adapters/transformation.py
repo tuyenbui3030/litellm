@@ -1531,11 +1531,15 @@ class LiteLLMAnthropicMessagesAdapter:
         self, response: ModelResponse, current_content_block_index: int
     ) -> Union[ContentBlockDelta, MessageBlockDelta]:
         ## base case - final chunk w/ finish reason
-        if response.choices[0].finish_reason is not None:
-            delta = MessageDelta(
-                stop_reason=self._translate_openai_finish_reason_to_anthropic(
+        choices_empty = not getattr(response, "choices", None) or len(response.choices) == 0
+        if choices_empty or response.choices[0].finish_reason is not None:
+            stop_reason = None
+            if not choices_empty:
+                stop_reason = self._translate_openai_finish_reason_to_anthropic(
                     response.choices[0].finish_reason
-                ),
+                )
+            delta = MessageDelta(
+                stop_reason=stop_reason,
             )
             if getattr(response, "usage", None) is not None:
                 litellm_usage_chunk: Optional[Usage] = response.usage  # type: ignore

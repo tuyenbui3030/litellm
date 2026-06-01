@@ -718,11 +718,26 @@ def _count_content_list(
                 num_tokens += count_function(c)
             elif c["type"] == "text":
                 num_tokens += count_function(str(c.get("text", "")))
-            elif c["type"] == "image_url":
-                image_url = c.get("image_url")
-                num_tokens += _count_image_tokens(
-                    image_url, use_default_image_token_count
-                )
+            elif c["type"] in ("image", "image_url"):
+                if c["type"] == "image":
+                    image_source = c.get("source", {})
+                    image_data = ""
+                    media_type = "image/jpeg"
+                    if isinstance(image_source, dict):
+                        image_data = image_source.get("data", "")
+                        media_type = image_source.get("media_type", "image/jpeg")
+                    if image_data:
+                        formatted_data = f"data:{media_type};base64,{image_data}"
+                        num_tokens += _count_image_tokens(
+                            formatted_data, use_default_image_token_count
+                        )
+                    else:
+                        num_tokens += DEFAULT_IMAGE_TOKEN_COUNT
+                else:
+                    image_url = c.get("image_url")
+                    num_tokens += _count_image_tokens(
+                        image_url, use_default_image_token_count
+                    )
             elif c["type"] in ("tool_use", "tool_result"):
                 num_tokens += _count_anthropic_content(
                     c,
@@ -744,7 +759,7 @@ def _count_content_list(
                 )
                 raise ValueError(
                     f"Invalid content item type: {content_type}. "
-                    f"Expected str or dict with 'type' field (text, image_url, tool_use, tool_result, thinking)."
+                    f"Expected str or dict with 'type' field (text, image, image_url, tool_use, tool_result, thinking)."
                 )
         return num_tokens
     except Exception as e:

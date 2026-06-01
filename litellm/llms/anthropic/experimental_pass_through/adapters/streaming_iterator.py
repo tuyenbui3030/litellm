@@ -257,6 +257,9 @@ class AnthropicStreamWrapper(AdapterCompletionStreamWrapper):
             async for chunk in self.completion_stream:
                 if chunk == "None" or chunk is None:
                     raise Exception
+                
+                # Print debug info to trace chunk contents
+                print(f"DEBUG RAW CHUNK: choices={getattr(chunk, 'choices', None)} usage={getattr(chunk, 'usage', None)}", flush=True)
 
                 # Check if we need to start a new content block
                 should_start_new_block = self._should_start_new_content_block(chunk)
@@ -468,6 +471,10 @@ class AnthropicStreamWrapper(AdapterCompletionStreamWrapper):
         - Specific markers in the content
         """
         from .transformation import LiteLLMAnthropicMessagesAdapter
+
+        # If choices list is empty (e.g., usage-only or metadata-only chunk)
+        if not getattr(chunk, "choices", None) or len(chunk.choices) == 0:
+            return False
 
         # Example logic - customize based on your needs:
         # If chunk indicates a tool call

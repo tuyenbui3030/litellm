@@ -2510,12 +2510,6 @@ class VertexGeminiConfig(VertexAIBaseConfig, BaseConfig):
         ## RESPONSE OBJECT
         try:
             response_json = raw_response.json()
-            if "response" in response_json and (
-                "candidates" not in response_json or "usageMetadata" not in response_json
-            ):
-                # Handle gemini_cli wrapper: {'response': {candidates: ...}, 'traceId': ...}
-                response_json = response_json["response"]
-
             completion_response = GenerateContentResponseBody(**response_json)  # type: ignore
         except Exception as e:
             raise VertexAIError(
@@ -2727,6 +2721,7 @@ async def make_call(
     model: str,
     messages: list,
     logging_obj,
+    iterator_class: Optional[type] = None,  # allow provider-specific iterator subclass
 ):
     if gemini_client is not None:
         client = gemini_client
@@ -2754,7 +2749,8 @@ async def make_call(
             headers=response.headers,
         )
 
-    completion_stream = ModelResponseIterator(
+    iterator_cls = iterator_class or ModelResponseIterator
+    completion_stream = iterator_cls(
         streaming_response=response.aiter_lines(),
         sync_stream=False,
         logging_obj=logging_obj,
@@ -2780,6 +2776,7 @@ def make_sync_call(
     model: str,
     messages: list,
     logging_obj,
+    iterator_class: Optional[type] = None,  # allow provider-specific iterator subclass
 ):
     if gemini_client is not None:
         client = gemini_client
@@ -2797,7 +2794,8 @@ def make_sync_call(
             headers=response.headers,
         )
 
-    completion_stream = ModelResponseIterator(
+    iterator_cls = iterator_class or ModelResponseIterator
+    completion_stream = iterator_cls(
         streaming_response=response.iter_lines(),
         sync_stream=True,
         logging_obj=logging_obj,
@@ -2873,6 +2871,7 @@ class VertexLLM(VertexBase):
 
         if custom_llm_provider == "gemini_cli":
             import litellm
+
             headers = litellm.GeminiCLIConfig().validate_environment(
                 api_key=auth_header,
                 headers=extra_headers,
@@ -2910,6 +2909,16 @@ class VertexLLM(VertexBase):
         )
 
         request_body_str = json.dumps(request_body)
+        # Use a provider-specific iterator for gemini_cli to handle its response
+        # envelope without modifying the shared ModelResponseIterator.
+        if custom_llm_provider == "gemini_cli":
+            from litellm.llms.gemini_cli.chat.transformation import (
+                GeminiCLIModelResponseIterator,
+            )
+
+            _iterator_class: Optional[type] = GeminiCLIModelResponseIterator
+        else:
+            _iterator_class = None
         streaming_response = CustomStreamWrapper(
             completion_stream=None,
             make_call=partial(
@@ -2925,6 +2934,7 @@ class VertexLLM(VertexBase):
                 model=model,
                 messages=messages,
                 logging_obj=logging_obj,
+                iterator_class=_iterator_class,
             ),
             model=model,
             custom_llm_provider="vertex_ai_beta",
@@ -2986,6 +2996,7 @@ class VertexLLM(VertexBase):
 
         if custom_llm_provider == "gemini_cli":
             import litellm
+
             headers = litellm.GeminiCLIConfig().validate_environment(
                 api_key=auth_header,
                 headers=extra_headers,
@@ -3053,6 +3064,21 @@ class VertexLLM(VertexBase):
                 headers=None,
             )
 
+        if custom_llm_provider == "gemini_cli":
+            from litellm.llms.gemini_cli.chat.transformation import GeminiCLIConfig
+
+            return GeminiCLIConfig().transform_response(
+                model=model,
+                raw_response=response,
+                model_response=model_response,
+                logging_obj=logging_obj,
+                api_key="",
+                request_data=cast(dict, request_body),
+                messages=messages,
+                optional_params=optional_params,
+                litellm_params=litellm_params,
+                encoding=encoding,
+            )
         return VertexGeminiConfig().transform_response(
             model=model,
             raw_response=response,
@@ -3184,6 +3210,7 @@ class VertexLLM(VertexBase):
         )
         if custom_llm_provider == "gemini_cli":
             import litellm
+
             headers = litellm.GeminiCLIConfig().validate_environment(
                 api_key=auth_header,
                 headers=extra_headers,
@@ -3224,6 +3251,16 @@ class VertexLLM(VertexBase):
         ## SYNC STREAMING CALL ##
         if stream is True:
             request_data_str = json.dumps(data)
+            # Use a provider-specific iterator for gemini_cli to handle its response
+            # envelope without modifying the shared ModelResponseIterator.
+            if custom_llm_provider == "gemini_cli":
+                from litellm.llms.gemini_cli.chat.transformation import (
+                    GeminiCLIModelResponseIterator,
+                )
+
+                _sync_iterator_class: Optional[type] = GeminiCLIModelResponseIterator
+            else:
+                _sync_iterator_class = None
             streaming_response = CustomStreamWrapper(
                 completion_stream=None,
                 make_call=partial(
@@ -3239,6 +3276,7 @@ class VertexLLM(VertexBase):
                     messages=messages,
                     logging_obj=logging_obj,
                     headers=headers,
+                    iterator_class=_sync_iterator_class,
                 ),
                 model=model,
                 custom_llm_provider="vertex_ai_beta",

@@ -9,13 +9,22 @@ services:
     ## Uncomment these lines to start proxy with a config.yaml file ##
     volumes:
       - ./proxy_server_config.yaml:/app/proxy_server_config.yaml
+      
+      ## --- DEVELOPMENT HOT-RELOAD ---
+      ## Mount local source code for instant updates without rebuilding
+      - ./litellm:/app/litellm
+      - ./enterprise:/app/enterprise
+      - ./litellm-proxy-extras:/app/litellm-proxy-extras
     command:
       - "--config=/app/proxy_server_config.yaml"
+      - "--reload" # Enable uvicorn hot reload
     ##############################################
     ports:
       - "4000:4000" # Map the container port to the host, change the host port if necessary
     environment:
       DATABASE_URL: "postgresql://llmproxy:dbpassword9090@db:5432/litellm"
+      # Force Python to load our local mounted code instead of the pre-installed package inside .venv
+      PYTHONPATH: "/app"
       # Optional: route read-only queries (find_*, count, group_by, query_raw/_first)
       # to a separate reader endpoint, e.g. an Aurora reader. Leave unset for
       # single-DB deployments. With IAM_TOKEN_DB_AUTH enabled, the reader URL

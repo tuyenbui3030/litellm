@@ -120,7 +120,14 @@ class ChunkProcessor:
         system_fingerprint = chunk.get("system_fingerprint", None)
 
         first_chunk_with_choices = next((c for c in chunks if c.get("choices")), chunk)
-        role = first_chunk_with_choices["choices"][0]["delta"]["role"]
+        role = "assistant"
+        try:
+            if isinstance(first_chunk_with_choices, dict):
+                role = first_chunk_with_choices["choices"][0]["delta"].get("role", "assistant") or "assistant"
+            else:
+                role = getattr(first_chunk_with_choices.choices[0].delta, "role", "assistant") or "assistant"
+        except Exception:
+            pass
         finish_reason = "stop"
         for chunk in chunks:
             if "choices" in chunk and len(chunk["choices"]) > 0:
