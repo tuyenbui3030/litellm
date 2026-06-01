@@ -120,6 +120,10 @@ async def gemini_cli_confirm(callback_url: str = Form(...), model_alias: str = F
                 "updated_by": "gemini-cli-setup"
             }
         )
+
+        # Clear cache and reload models
+        from litellm.proxy.management_endpoints.model_management_endpoints import clear_cache
+        await clear_cache()
         
         return f"""
         <body style='font-family: sans-serif; text-align: center; padding-top: 100px;'>

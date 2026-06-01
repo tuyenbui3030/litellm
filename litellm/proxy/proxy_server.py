@@ -943,6 +943,8 @@ async def proxy_startup_event(app: FastAPI):  # noqa: PLR0915
     shared_aiohttp_session = await _initialize_shared_aiohttp_session()
 
     # End of startup event
+    import litellm as _litellm
+    _litellm.proxy_server_started = True
     yield
 
     # Shutdown event - close shared aiohttp session

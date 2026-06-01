@@ -105,17 +105,21 @@ class Authenticator:
             access_token = litellm_params.get("gemini_cli_access_token")
             refresh_token = litellm_params.get("gemini_cli_refresh_token")
 
-            if project_id:
-                # If we have a refresh token, always try to get a fresh access token to be safe
-                if refresh_token:
-                    try:
-                        refreshed = self._refresh_tokens(refresh_token)
-                        return refreshed["access_token"], project_id
-                    except Exception as e:
-                        if access_token: return access_token, project_id # fallback to static access token
-                        raise e
-                if access_token:
-                    return access_token, project_id
+            if refresh_token:
+                try:
+                    refreshed = self._refresh_tokens(refresh_token)
+                    new_access_token = refreshed["access_token"]
+                    # If project_id missing or decrypt failed, fetch it
+                    if not project_id:
+                        project_id = self._fetch_project_id(new_access_token)
+                    return new_access_token, project_id
+                except Exception as e:
+                    if access_token and project_id:
+                        return access_token, project_id
+                    raise e
+
+            if access_token and project_id:
+                return access_token, project_id
 
         # 2. Check environment variables
         env_access_token = os.getenv("GEMINI_CLI_ACCESS_TOKEN")
@@ -150,7 +154,17 @@ class Authenticator:
                         "Gemini CLI credential refresh failed, re-login required: %s", exc
                     )
 
-        # Fallback to full login flow
+        # Fallback to full login flow - only allowed in non-proxy (interactive) environments
+        import litellm
+        if getattr(litellm, "proxy_server_started", False):
+            raise GetAccessTokenError(
+                message=(
+                    "Gemini CLI credentials not found or expired. "
+                    "Please re-authenticate via /gemini_cli/login endpoint."
+                ),
+                status_code=401,
+            )
+
         print(  # noqa: T201
             "Sign in with Gemini CLI (Google Cloud Code Assist) required.\n"
             "A browser window will open shortly to complete the OAuth flow...",
@@ -301,7 +315,7 @@ class Authenticator:
             data = resp.json()
         except httpx.HTTPStatusError as exc:
             raise GetAccessTokenError(
-                message=f"Token exchange failed: {exc}",
+                message=f"Token exchange failed: {exc} - Response: {exc.response.text}",
                 status_code=exc.response.status_code,
             )
         except Exception as exc:

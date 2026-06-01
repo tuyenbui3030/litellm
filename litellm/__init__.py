@@ -650,6 +650,8 @@ gemini_cli_models: Set = {
     "gemini-3-flash-preview",
     "gemini-3.1-flash-lite-preview",
     "gemini-2.5-pro",
+    "gemini-3.1-flash",
+    "gemini-3-flash",
 }
 minimax_models: Set = set()
 aws_polly_models: Set = set()

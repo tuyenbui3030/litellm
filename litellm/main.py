@@ -1633,6 +1633,9 @@ def completion(  # type: ignore # noqa: PLR0915
             litellm_request_debug=kwargs.get("litellm_request_debug", False),
             tpm=kwargs.get("tpm"),
             rpm=kwargs.get("rpm"),
+            gemini_cli_refresh_token=kwargs.get("gemini_cli_refresh_token"),
+            gemini_cli_access_token=kwargs.get("gemini_cli_access_token"),
+            gemini_cli_project_id=kwargs.get("gemini_cli_project_id"),
         )
         cast(LiteLLMLoggingObj, logging).update_environment_variables(
             model=model,

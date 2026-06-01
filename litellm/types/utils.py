@@ -3182,6 +3182,9 @@ all_litellm_params = (
         "search_tool_name",
         "order",
         "enable_json_schema_validation",
+        "gemini_cli_refresh_token",
+        "gemini_cli_access_token",
+        "gemini_cli_project_id",
     ]
     + list(StandardCallbackDynamicParams.__annotations__.keys())
     + list(CustomPricingLiteLLMParams.model_fields.keys())

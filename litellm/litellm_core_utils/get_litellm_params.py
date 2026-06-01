@@ -34,6 +34,9 @@ _OPTIONAL_KWARGS_KEYS = frozenset(
         "aws_bedrock_runtime_endpoint",
         "tpm",
         "rpm",
+        "gemini_cli_refresh_token",
+        "gemini_cli_access_token",
+        "gemini_cli_project_id",
     }
 )
 
