@@ -3313,6 +3313,22 @@ class VertexLLM(VertexBase):
                 headers=None,
             )
 
+        if custom_llm_provider == "gemini_cli":
+            from litellm.llms.gemini_cli.chat.transformation import GeminiCLIConfig
+
+            return GeminiCLIConfig().transform_response(
+                model=model,
+                raw_response=response,
+                model_response=model_response,
+                logging_obj=logging_obj,
+                optional_params=optional_params,
+                litellm_params=litellm_params,
+                api_key="",
+                request_data=data,  # type: ignore
+                messages=messages,
+                encoding=encoding,
+            )
+
         return VertexGeminiConfig().transform_response(
             model=model,
             raw_response=response,

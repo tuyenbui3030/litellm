@@ -1,4 +1,3 @@
-import asyncio
 import json
 import re
 from copy import deepcopy
@@ -9,14 +8,14 @@ import pytest
 from pydantic import BaseModel
 
 import litellm
-from litellm import ModelResponse, completion
+from litellm import ModelResponse
 from litellm.llms.gemini.chat.transformation import GoogleAIStudioGeminiConfig
 from litellm.llms.vertex_ai.common_utils import VertexAIError
 from litellm.llms.vertex_ai.gemini.vertex_and_google_ai_studio_gemini import (
     VertexGeminiConfig,
 )
 from litellm.types.llms.vertex_ai import UsageMetadata
-from litellm.types.utils import ChoiceLogprobs, Usage
+from litellm.types.utils import Usage
 from litellm.utils import CustomStreamWrapper
 
 
@@ -723,7 +722,6 @@ def test_finish_reason_unspecified_and_malformed_function_call():
 
 def test_vertex_ai_usage_metadata_response_token_count():
     """For Gemini Live API"""
-    from litellm.types.utils import PromptTokensDetailsWrapper
 
     v = VertexGeminiConfig()
     usage_metadata = {
@@ -1092,7 +1090,6 @@ def test_vertex_ai_streaming_usage_web_search_calculation():
     """
     Ensure streaming usage calculation uses same function as non-streaming usage calculation
     """
-    from unittest.mock import patch
 
     from litellm.llms.vertex_ai.gemini.vertex_and_google_ai_studio_gemini import (
         ModelResponseIterator,
@@ -1340,7 +1337,6 @@ def test_vertex_ai_transform_parts():
 
 def test_vertex_ai_usage_metadata_missing_token_count():
     """Test that missing tokenCount in responseTokensDetails defaults to 0"""
-    from litellm.types.utils import PromptTokensDetailsWrapper
 
     v = VertexGeminiConfig()
     usage_metadata = {
@@ -1823,7 +1819,6 @@ def test_vertex_ai_annotation_streaming_events():
     from litellm.llms.vertex_ai.gemini.vertex_and_google_ai_studio_gemini import (
         ModelResponseIterator,
     )
-    from litellm.types.llms.openai import ChatCompletionAnnotation
 
     litellm_logging = MagicMock()
 
@@ -4899,3 +4894,185 @@ def test_mid_stream_429_error_raises_during_iteration():
     # Verify: 429 error is properly raised
     assert exc_info.value.status_code == 429
     assert "RESOURCE_EXHAUSTED" in str(exc_info.value.message)
+
+
+def test_gemini_cli_model_mapping():
+    """
+    Test that unsupported/non-preview model names under gemini_cli
+    are mapped to their working preview counterparts during request transformation.
+    """
+    from litellm.llms.vertex_ai.gemini.transformation import _transform_request_body
+    from litellm.types.utils import LlmProviders
+
+    # Test cases mapping (input_model -> expected_output_model)
+    test_cases = {
+        "gemini-3.1-flash": "gemini-3-flash-preview",
+        "gemini-3-flash": "gemini-3-flash-preview",
+        "gemini-3.1-pro": "gemini-3.1-pro-preview",
+        "gemini-3-pro": "gemini-3.1-pro-preview",
+        "gemini-3.1-pro-preview": "gemini-3.1-pro-preview",  # Unaffected
+        "gemini-2.5-pro": "gemini-2.5-pro",  # Unaffected
+    }
+
+    for input_model, expected_model in test_cases.items():
+        transformed = _transform_request_body(
+            messages=[{"role": "user", "content": "Hello"}],
+            model=input_model,
+            optional_params={},
+            custom_llm_provider=LlmProviders.GEMINI_CLI,
+            litellm_params={"gemini_cli_project_id": "test-project"},
+            cached_content=None,
+        )
+        assert (
+            transformed["model"] == expected_model
+        ), f"Expected {expected_model} for input {input_model}, got {transformed['model']}"
+
+
+@patch("litellm.llms.gemini_cli.chat.transformation.Authenticator.get_credentials")
+def test_gemini_cli_sync_response_unwrapping(mock_get_credentials):
+    """
+    Test that a sync completion call under custom_llm_provider='gemini_cli'
+    properly unwraps the wrapped response envelope and returns the parsed response.
+    """
+    from litellm.llms.vertex_ai.gemini.vertex_and_google_ai_studio_gemini import (
+        VertexLLM,
+    )
+    from litellm.llms.custom_httpx.http_handler import HTTPHandler
+    import httpx
+
+    mock_get_credentials.return_value = ("mock-access-token", "mock-project-id")
+
+    # Wrapped JSON response from gemini_cli endpoint
+    wrapped_response_json = {
+        "response": {
+            "candidates": [
+                {
+                    "content": {
+                        "role": "model",
+                        "parts": [{"text": "Hello, how can I help you today?"}],
+                    },
+                    "finishReason": "STOP",
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 5,
+                "candidatesTokenCount": 10,
+                "totalTokenCount": 15,
+            },
+        },
+        "traceId": "mock-trace-id",
+    }
+
+    mock_response = MagicMock(spec=httpx.Response)
+    mock_response.status_code = 200
+    mock_response.json.return_value = wrapped_response_json
+    mock_response.headers = {}
+    mock_response.text = json.dumps(wrapped_response_json)
+
+    mock_client = MagicMock(spec=HTTPHandler)
+    mock_client.post.return_value = mock_response
+
+    vertex_llm = VertexLLM()
+    model_response = ModelResponse()
+
+    # Perform completion call
+    response = vertex_llm.completion(
+        model="gemini_cli/gemini-3-flash",
+        messages=[{"role": "user", "content": "Hello"}],
+        model_response=model_response,
+        print_verbose=print,
+        custom_llm_provider="gemini_cli",
+        encoding=None,
+        logging_obj=MagicMock(),
+        optional_params={},
+        acompletion=False,
+        timeout=None,
+        vertex_project=None,
+        vertex_location=None,
+        vertex_credentials=None,
+        gemini_api_key=None,
+        litellm_params={},
+        client=mock_client,
+    )
+
+    # Verify response is unwrapped and parsed successfully
+    assert response.choices[0].message.content == "Hello, how can I help you today?"
+    assert response.usage.prompt_tokens == 5
+    assert response.usage.completion_tokens == 10
+    assert response.usage.total_tokens == 15
+
+
+@pytest.mark.asyncio
+@patch("litellm.llms.gemini_cli.chat.transformation.Authenticator.get_credentials")
+async def test_gemini_cli_async_response_unwrapping(mock_get_credentials):
+    """
+    Test that an async completion call under custom_llm_provider='gemini_cli'
+    properly unwraps the wrapped response envelope and returns the parsed response.
+    """
+    from litellm.llms.vertex_ai.gemini.vertex_and_google_ai_studio_gemini import (
+        VertexLLM,
+    )
+    from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
+    import httpx
+
+    mock_get_credentials.return_value = ("mock-access-token", "mock-project-id")
+
+    wrapped_response_json = {
+        "response": {
+            "candidates": [
+                {
+                    "content": {"role": "model", "parts": [{"text": "Hello async!"}]},
+                    "finishReason": "STOP",
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 6,
+                "candidatesTokenCount": 11,
+                "totalTokenCount": 17,
+            },
+        },
+        "traceId": "mock-trace-id",
+    }
+
+    mock_response = MagicMock(spec=httpx.Response)
+    mock_response.status_code = 200
+    mock_response.json.return_value = wrapped_response_json
+    mock_response.headers = {}
+    mock_response.text = json.dumps(wrapped_response_json)
+
+    mock_client = MagicMock(spec=AsyncHTTPHandler)
+
+    # Since it is async, the post call is awaited
+    async def mock_post(*args, **kwargs):
+        return mock_response
+
+    mock_client.post = mock_post
+
+    vertex_llm = VertexLLM()
+    model_response = ModelResponse()
+
+    # Perform async completion call
+    response = await vertex_llm.completion(
+        model="gemini_cli/gemini-3.1-pro",
+        messages=[{"role": "user", "content": "Hello"}],
+        model_response=model_response,
+        print_verbose=print,
+        custom_llm_provider="gemini_cli",
+        encoding=None,
+        logging_obj=MagicMock(),
+        optional_params={},
+        acompletion=True,
+        timeout=None,
+        vertex_project=None,
+        vertex_location=None,
+        vertex_credentials=None,
+        gemini_api_key=None,
+        litellm_params={},
+        client=mock_client,
+    )
+
+    # Verify response is unwrapped and parsed successfully
+    assert response.choices[0].message.content == "Hello async!"
+    assert response.usage.prompt_tokens == 6
+    assert response.usage.completion_tokens == 11
+    assert response.usage.total_tokens == 17

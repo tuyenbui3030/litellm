@@ -174,17 +174,25 @@ class GeminiCLIConfig(GoogleAIStudioGeminiConfig):
             response_json = raw_response.json()
             unwrapped = _unwrap_gemini_cli_response_json(response_json)
             if unwrapped is not response_json:
-                # Re-create a minimal httpx.Response with the unwrapped body so
-                # the parent transform_response can parse it transparently.
+                # Re-create a minimal httpx.Response with the unwrapped body.
+                # Strip content-encoding and content-length headers because the content is now uncompressed
+                # and its length has changed.
+                response_headers = {
+                    k: v
+                    for k, v in raw_response.headers.items()
+                    if k.lower() not in ("content-encoding", "content-length")
+                }
                 raw_response = httpx.Response(
                     status_code=raw_response.status_code,
-                    headers=raw_response.headers,
+                    headers=response_headers,
                     content=_json.dumps(unwrapped).encode(),
                     request=raw_response.request,
                 )
         except Exception:
             # If anything goes wrong, fall through and let the parent handle it
             pass
+
+
 
         return super().transform_response(
             model=model,

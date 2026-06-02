@@ -1,35 +1,32 @@
-from fastapi import APIRouter, Request, HTTPException, Form
-from fastapi.responses import RedirectResponse, HTMLResponse
-import httpx
-import os
+from fastapi import APIRouter, Request, Form
+from fastapi.responses import HTMLResponse
 import json
 from typing import Optional
 
 from litellm.llms.gemini_cli.authenticator import Authenticator, generate_pkce_pair
-from litellm.llms.gemini_cli.common_utils import (
-    GEMINI_CLI_AUTHORIZE_URL,
-    GEMINI_CLI_CLIENT_ID,
-    GEMINI_CLI_SCOPES,
-)
-from litellm._logging import verbose_proxy_logger
 from litellm.proxy.common_utils.encrypt_decrypt_utils import encrypt_value_helper
 
 router = APIRouter()
 authenticator = Authenticator()
 
+
 @router.get("/gemini_cli/login", response_class=HTMLResponse)
-async def gemini_cli_login_page(request: Request, model_alias: Optional[str] = "gemini-new-acc"):
+async def gemini_cli_login_page(
+    request: Request, model_alias: Optional[str] = "gemini-new-acc"
+):
     """
     Trang hướng dẫn nạp tài khoản Gemini CLI
     """
     # Use a standard loopback redirect URI
     redirect_uri = "http://127.0.0.1:8080/callback"
-    
+
     # Generate PKCE pair
     code_verifier, code_challenge = generate_pkce_pair()
-    
-    auth_url, state = authenticator.generate_auth_url(redirect_uri, code_challenge=code_challenge)
-    
+
+    auth_url, state = authenticator.generate_auth_url(
+        redirect_uri, code_challenge=code_challenge
+    )
+
     return f"""
     <html>
     <head>
@@ -72,18 +69,27 @@ async def gemini_cli_login_page(request: Request, model_alias: Optional[str] = "
     </html>
     """
 
+
 @router.post("/gemini_cli/confirm", response_class=HTMLResponse)
-async def gemini_cli_confirm(callback_url: str = Form(...), model_alias: str = Form(...), state: str = Form(...), code_verifier: str = Form(...)):
+async def gemini_cli_confirm(
+    callback_url: str = Form(...),
+    model_alias: str = Form(...),
+    state: str = Form(...),
+    code_verifier: str = Form(...),
+):
     """
     Xử lý URL được dán vào để đăng ký model
     """
     try:
         redirect_uri = "http://127.0.0.1:8080/callback"
-        
+
         # Exchange code for tokens
-        tokens = authenticator.handle_callback(callback_url, redirect_uri, state=state, code_verifier=code_verifier)
-        
+        tokens = authenticator.handle_callback(
+            callback_url, redirect_uri, state=state, code_verifier=code_verifier
+        )
+
         import litellm.proxy.proxy_server as proxy_server
+
         if proxy_server.prisma_client is None:
             return "<h1>Error: Prisma not initialized</h1>"
 
@@ -95,14 +101,16 @@ async def gemini_cli_confirm(callback_url: str = Form(...), model_alias: str = F
         await proxy_server.prisma_client.db.litellm_proxymodeltable.create(
             data={
                 "model_name": f"{model_alias}-pro",
-                "litellm_params": json.dumps({
-                    "model": "gemini_cli/gemini-3.1-pro-preview",
-                    "gemini_cli_refresh_token": refresh_token,
-                    "gemini_cli_project_id": project_id
-                }),
+                "litellm_params": json.dumps(
+                    {
+                        "model": "gemini_cli/gemini-3.1-pro-preview",
+                        "gemini_cli_refresh_token": refresh_token,
+                        "gemini_cli_project_id": project_id,
+                    }
+                ),
                 "model_info": json.dumps({"base_model": "gemini-3.1-pro"}),
                 "created_by": "gemini-cli-setup",
-                "updated_by": "gemini-cli-setup"
+                "updated_by": "gemini-cli-setup",
             }
         )
 
@@ -110,21 +118,26 @@ async def gemini_cli_confirm(callback_url: str = Form(...), model_alias: str = F
         await proxy_server.prisma_client.db.litellm_proxymodeltable.create(
             data={
                 "model_name": f"{model_alias}-flash",
-                "litellm_params": json.dumps({
-                    "model": "gemini_cli/gemini-3.1-flash",
-                    "gemini_cli_refresh_token": refresh_token,
-                    "gemini_cli_project_id": project_id
-                }),
-                "model_info": json.dumps({"base_model": "gemini-3.1-flash"}),
+                "litellm_params": json.dumps(
+                    {
+                        "model": "gemini_cli/gemini-3-flash-preview",
+                        "gemini_cli_refresh_token": refresh_token,
+                        "gemini_cli_project_id": project_id,
+                    }
+                ),
+                "model_info": json.dumps({"base_model": "gemini-3-flash-preview"}),
                 "created_by": "gemini-cli-setup",
-                "updated_by": "gemini-cli-setup"
+                "updated_by": "gemini-cli-setup",
             }
         )
 
         # Clear cache and reload models
-        from litellm.proxy.management_endpoints.model_management_endpoints import clear_cache
+        from litellm.proxy.management_endpoints.model_management_endpoints import (
+            clear_cache,
+        )
+
         await clear_cache()
-        
+
         return f"""
         <body style='font-family: sans-serif; text-align: center; padding-top: 100px;'>
             <h1 style='color: #059669;'>Success!</h1>

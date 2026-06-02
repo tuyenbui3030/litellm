@@ -1231,17 +1231,26 @@ def _transform_request_body(  # noqa: PLR0915
                 data["serviceTier"] = service_tier
 
         # Only add labels for Vertex AI endpoints (not Google GenAI/AI Studio) and only if non-empty
-        if labels and custom_llm_provider not in [LlmProviders.GEMINI, LlmProviders.GEMINI_CLI]:
+        if labels and custom_llm_provider not in [
+            LlmProviders.GEMINI,
+            LlmProviders.GEMINI_CLI,
+        ]:
             data["labels"] = labels
         _pop_and_merge_extra_body(data, optional_params)
-        
+
         if custom_llm_provider == LlmProviders.GEMINI_CLI:
+            mapped_model = model
+            if model in ["gemini-3.1-flash", "gemini-3-flash"]:
+                mapped_model = "gemini-3-flash-preview"
+            elif model in ["gemini-3.1-pro", "gemini-3-pro"]:
+                mapped_model = "gemini-3.1-pro-preview"
+
             return {
                 "project": litellm_params.get("gemini_cli_project_id", ""),
-                "model": model,
-                "request": data
+                "model": mapped_model,
+                "request": data,
             }
-            
+
     except Exception as e:
         raise e
 
