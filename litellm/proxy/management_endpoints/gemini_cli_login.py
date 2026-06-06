@@ -3,12 +3,13 @@ import json
 from typing import Optional
 import httpx
 
-from fastapi import APIRouter, Form, Request, HTTPException, status
+from fastapi import APIRouter, Form, Request, HTTPException, status, Depends
 from fastapi.responses import HTMLResponse
 
 import litellm
 from litellm.llms.gemini_cli.authenticator import Authenticator, generate_pkce_pair
-from litellm.proxy._types import ProxyException
+from litellm.proxy._types import ProxyException, UserAPIKeyAuth
+from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
 from litellm.proxy.common_utils.encrypt_decrypt_utils import (
     decrypt_value_helper,
     encrypt_value_helper,
@@ -20,7 +21,8 @@ authenticator = Authenticator()
 
 @router.get("/gemini_cli/login", response_class=HTMLResponse)
 async def gemini_cli_login_page(
-    request: Request, model_alias: Optional[str] = "gemini-new-acc"
+    request: Request,
+    model_alias: Optional[str] = "gemini-new-acc",
 ):
     """
     Trang hướng dẫn nạp tài khoản Gemini CLI
@@ -40,12 +42,32 @@ async def gemini_cli_login_page(
     <head>
         <title>LiteLLM - Add Gemini Account</title>
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+        <style>
+            .modal-overlay {{
+                background-color: rgba(0, 0, 0, 0.8);
+                backdrop-filter: blur(4px);
+            }}
+        </style>
     </head>
     <body class="bg-gray-50 h-screen flex items-center justify-center">
+        <!-- Login Overlay -->
+        <div id="login-overlay" class="fixed inset-0 z-50 flex items-center justify-center modal-overlay hidden">
+            <div class="bg-white p-8 rounded-2xl shadow-2xl border border-gray-100 max-w-md w-full mx-4">
+                <h2 class="text-2xl font-bold mb-4 text-blue-600">Authentication Required</h2>
+                <p class="text-gray-600 mb-6 text-sm">Vui lòng nhập LiteLLM API Key để thực hiện setup.</p>
+                <div class="space-y-4">
+                    <input type="password" id="api-key-input" placeholder="sk-..." class="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                    <button onclick="saveApiKey()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg transition">
+                        Confirm Key
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <div class="bg-white p-8 rounded-xl shadow-lg max-w-md w-full border border-gray-100">
             <h1 class="text-2xl font-bold text-gray-800 mb-2">Gemini CLI Setup</h1>
             <p class="text-gray-600 mb-6 text-sm">Vì lý do bảo mật của Google, bạn cần thực hiện các bước sau để nạp tài khoản vào Proxy.</p>
-            
+
             <div class="space-y-4">
                 <div class="flex items-start space-x-3">
                     <span class="bg-blue-100 text-blue-600 rounded-full h-6 w-6 flex items-center justify-center flex-shrink-0 text-xs font-bold">1</span>
@@ -54,43 +76,116 @@ async def gemini_cli_login_page(
                 <a href="{auth_url}" target="_blank" class="block w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition">
                     Login with Google
                 </a>
-                
+
                 <div class="flex items-start space-x-3 pt-4">
                     <span class="bg-blue-100 text-blue-600 rounded-full h-6 w-6 flex items-center justify-center flex-shrink-0 text-xs font-bold">2</span>
                     <p class="text-sm text-gray-700">Sau khi xong, trình duyệt sẽ báo "Site can't be reached". Đừng lo, hãy <b>Copy toàn bộ URL</b> đó dán vào đây:</p>
                 </div>
-                
-                <form action="/gemini_cli/confirm" method="POST" class="space-y-3">
-                    <input type="hidden" name="state" value="{state}">
-                    <input type="hidden" name="code_verifier" value="{code_verifier}">
+
+                <form id="setup-form" class="space-y-3">
+                    <input type="hidden" id="state" value="{state}">
+                    <input type="hidden" id="code_verifier" value="{code_verifier}">
 
                     <div class="mb-3">
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Tên Model muốn load balance (VD: geminicli):</label>
-                        <input type="text" name="model_alias" required value="{model_alias}" class="w-full border rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                        <input type="text" id="model_alias" required value="{model_alias}" class="w-full border rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
                         <p class="text-xs text-gray-400 mt-1">Các tài khoản cùng tên model này sẽ được tự động load balance.</p>
                     </div>
 
                     <div class="mb-3 mt-4">
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Dán Callback URL (Báo lỗi "Site can't be reached"):</label>
-                        <textarea name="callback_url" required rows="3" class="w-full border rounded-lg p-2 text-xs font-mono focus:ring-2 focus:ring-blue-500 outline-none" placeholder="http://127.0.0.1:8080/callback?code=..."></textarea>
+                        <textarea id="callback_url" required rows="3" class="w-full border rounded-lg p-2 text-xs font-mono focus:ring-2 focus:ring-blue-500 outline-none" placeholder="http://127.0.0.1:8080/callback?code=..."></textarea>
                     </div>
-                    <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-2 rounded-lg transition mt-2">
+                    <div id="error-message" class="text-red-500 text-xs hidden mb-2"></div>
+                    <button type="submit" id="submit-btn" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-2 rounded-lg transition mt-2">
                         Confirm & Register
                     </button>
                 </form>
             </div>
         </div>
+
+        <script>
+            let apiKey = sessionStorage.getItem('lite_llm_api_key');
+
+            function saveApiKey() {{
+                const input = document.getElementById('api-key-input');
+                if (input.value) {{
+                    apiKey = input.value;
+                    sessionStorage.setItem('lite_llm_api_key', apiKey);
+                    document.getElementById('login-overlay').classList.add('hidden');
+                }}
+            }}
+
+            window.onload = function() {{
+                if (!apiKey) {{
+                    document.getElementById('login-overlay').classList.remove('hidden');
+                }}
+            }};
+
+            document.getElementById('setup-form').onsubmit = async function(e) {{
+                e.preventDefault();
+
+                const btn = document.getElementById('submit-btn');
+                const errMsg = document.getElementById('error-message');
+
+                btn.disabled = true;
+                btn.innerText = "Processing...";
+                errMsg.classList.add('hidden');
+
+                const formData = new FormData();
+                formData.append('callback_url', document.getElementById('callback_url').value);
+                formData.append('model_alias', document.getElementById('model_alias').value);
+                formData.append('state', document.getElementById('state').value);
+                formData.append('code_verifier', document.getElementById('code_verifier').value);
+
+                try {{
+                    const resp = await fetch("/gemini_cli/confirm", {{
+                        method: 'POST',
+                        headers: {{
+                            'Authorization': 'Bearer ' + apiKey
+                        }},
+                        body: formData
+                    }});
+
+                    const data = await resp.json();
+
+                    if (resp.ok) {{
+                        document.body.innerHTML = `
+                            <div class="bg-white p-8 rounded-xl shadow-lg max-w-md w-full border border-gray-100 text-center">
+                                <h1 class="text-2xl font-bold text-green-600 mb-4">Success!</h1>
+                                <p class="text-gray-700 mb-4">Account registered with 2 models:</p>
+                                <ul class="list-none p-0 mb-6 space-y-2">
+                                    <li class="font-bold text-gray-800">${{document.getElementById('model_alias').value}}-pro</li>
+                                    <li class="font-bold text-gray-800">${{document.getElementById('model_alias').value}}-flash</li>
+                                </ul>
+                                <a href='/gemini_cli/status' class="text-blue-600 hover:underline">Go to Status Dashboard</a>
+                            </div>
+                        `;
+                    }} else {{
+                        errMsg.innerText = data.detail || "Error processing request";
+                        errMsg.classList.remove('hidden');
+                    }}
+                }} catch (err) {{
+                    errMsg.innerText = "Connection error: " + err.message;
+                    errMsg.classList.remove('hidden');
+                }} finally {{
+                    btn.disabled = false;
+                    btn.innerText = "Confirm & Register";
+                }}
+            }};
+        </script>
     </body>
     </html>
     """
 
 
-@router.post("/gemini_cli/confirm", response_class=HTMLResponse)
+@router.post("/gemini_cli/confirm")
 async def gemini_cli_confirm(
     callback_url: str = Form(...),
     model_alias: str = Form(...),
     state: str = Form(...),
     code_verifier: str = Form(...),
+    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
 ):
     """
     Xử lý URL được dán vào để đăng ký model
@@ -125,7 +220,7 @@ async def gemini_cli_confirm(
         import litellm.proxy.proxy_server as proxy_server
 
         if proxy_server.prisma_client is None:
-            return "<h1>Error: Prisma not initialized</h1>"
+            raise HTTPException(status_code=500, detail="Prisma not initialized")
 
         # Encrypt sensitive values before saving to DB
         refresh_token = encrypt_value_helper(tokens["refresh_token"])
@@ -186,22 +281,12 @@ async def gemini_cli_confirm(
 
         await clear_cache()
 
-        return f"""
-        <body style='font-family: sans-serif; text-align: center; padding-top: 100px;'>
-            <h1 style='color: #059669;'>Success!</h1>
-            <p>Account registered with 2 models:</p>
-            <ul style='list-style: none; padding: 0;'>
-                <li><b>{model_alias}-pro</b></li>
-                <li><b>{model_alias}-flash</b></li>
-            </ul>
-            <a href='/ui' style='color: #2563eb;'>Go to Dashboard</a>
-        </body>
-        """
+        return {"status": "success", "model_alias": model_alias}
     except Exception as e:
         from litellm._logging import verbose_proxy_logger
 
         verbose_proxy_logger.error(f"Error in gemini_cli_confirm: {str(e)}")
-        return "<body style='font-family: sans-serif; padding: 20px;'><h1>Error</h1><p>Internal server error. Please check proxy logs.</p></body>"
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 async def _test_single_gemini_cli_model_by_params(
@@ -281,7 +366,9 @@ async def _test_single_gemini_cli_model_by_params(
 
 
 @router.get("/gemini_cli/test_one")
-async def test_single_gemini_cli_connection(model_id: str):
+async def test_single_gemini_cli_connection(
+    model_id: str, user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth)
+):
     """
     Test connection of a single registered gemini_cli model by model_id (unique)
     """
@@ -385,7 +472,9 @@ async def _fetch_quota_for_model(
 
 
 @router.get("/gemini_cli/quota_one")
-async def test_single_gemini_cli_quota(model_id: str):
+async def test_single_gemini_cli_quota(
+    model_id: str, user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth)
+):
     """
     Fetch quota info cho 1 model (nhận query model_id).
     """
@@ -615,7 +704,9 @@ def _process_error_logs_health(
 
 
 @router.get("/gemini_cli/health_one")
-async def get_single_model_health(model_id: str):
+async def get_single_model_health(
+    model_id: str, user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth)
+):
     """
     Fetch request health (Success/Fail) for a single model in the last 24 hours.
     Directly query database fields (model_id, model_group, and model) first.
@@ -695,10 +786,11 @@ async def get_single_model_health(model_id: str):
         success_count = _process_spend_logs_health(
             recent_spend_logs, model_id, model_obj.model_name, email
         )
-        fail_count = _process_error_logs_health(
-            recent_error_logs, model_id, model_obj.model_name, email
-        ) + _process_spend_logs_failures(
-            recent_spend_logs, model_id, model_obj.model_name, email
+        fail_count = (
+            _process_error_logs_health(recent_error_logs, model_id, model_obj.model_name, email)
+            + _process_spend_logs_failures(
+                recent_spend_logs, model_id, model_obj.model_name, email
+            )
         )
 
         # 3. Build Timeline (48 buckets of 30 mins)
@@ -743,7 +835,11 @@ async def get_single_model_health(model_id: str):
 
 
 @router.get("/gemini_cli/tool_call_one")
-async def test_single_model_tool_call(model_id: str, batch: int = 1):
+async def test_single_model_tool_call(
+    model_id: str,
+    batch: int = 1,
+    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+):
     """
     Thực hiện test tool-calling thực tế theo từng nhóm (batch) để verify toàn bộ 41 tools
     """
@@ -805,15 +901,17 @@ async def test_single_model_tool_call(model_id: str, batch: int = 1):
         return {"status": "error", "message": "Internal server error"}
 
 
-@router.get("/gemini_cli/status", response_class=HTMLResponse)
-async def gemini_cli_status_dashboard():
+@router.get("/gemini_cli/status_data")
+async def get_gemini_cli_status_data(
+    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+):
     """
-    Hiển thị bảng điều khiển trạng thái (Health, Quota, Tool Call) cho tất cả tài khoản Gemini CLI.
+    API endpoint to return JSON status for all Gemini CLI models.
     """
     import litellm.proxy.proxy_server as proxy_server
 
     if proxy_server.prisma_client is None:
-        return "<h1>Error: Prisma not initialized</h1>"
+        raise HTTPException(status_code=500, detail="Prisma not initialized")
 
     try:
         # Fetch all models from DB
@@ -821,7 +919,7 @@ async def gemini_cli_status_dashboard():
             await proxy_server.prisma_client.db.litellm_proxymodeltable.find_many()
         )
 
-        gemini_models = []
+        gemini_models_data = []
         for m in db_models:
             params = m.litellm_params
             if isinstance(params, str):
@@ -831,344 +929,475 @@ async def gemini_cli_status_dashboard():
                     continue
             if not isinstance(params, dict):
                 continue
-            model_name = params.get("model", "")
-            if model_name.startswith("gemini_cli/"):
-                gemini_models.append((m, params))
+            model_name_param = params.get("model", "")
+            if model_name_param.startswith("gemini_cli/"):
+                # Resolve email/organization
+                model_info = m.model_info
+                if isinstance(model_info, str):
+                    try:
+                        model_info = json.loads(model_info)
+                    except Exception:
+                        model_info = {}
+                email = (
+                    params.get("organization")
+                    or model_info.get("organization")
+                    or "Not Set"
+                )
 
-        # Build HTML table rows (initially pending) — use model_id as unique row key
-        html_rows = ""
-        for m, params in gemini_models:
-            model_name = m.model_name
-            mid = m.model_id
-            # Resolve email/organization
-            model_info = m.model_info
-            if isinstance(model_info, str):
-                try:
-                    model_info = json.loads(model_info)
-                except Exception:
-                    model_info = {}
-            email = (
-                params.get("organization")
-                or model_info.get("organization")
-                or "Not Set"
-            )
+                gemini_models_data.append(
+                    {
+                        "model_id": m.model_id,
+                        "model_name": m.model_name,
+                        "email": email,
+                    }
+                )
 
-            status_badge = f"""
-            <div class="flex items-center space-x-2">
-                <button id="btn-{mid}" onclick="checkModel('{mid}')" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1 px-3 rounded-lg text-xs transition">
-                    Test Connection
-                </button>
-                <span id="badge-{mid}" class="hidden px-3 py-1 text-xs leading-5 font-semibold rounded-full"></span>
+        return {"models": gemini_models_data}
+    except Exception as e:
+        from litellm._logging import verbose_proxy_logger
+
+        verbose_proxy_logger.error(f"Error in get_gemini_cli_status_data: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/gemini_cli/status", response_class=HTMLResponse)
+async def gemini_cli_status_dashboard():
+    """
+    Hiển thị bảng điều khiển trạng thái (Health, Quota, Tool Call) cho tất cả tài khoản Gemini CLI.
+    """
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Gemini CLI Connection Test</title>
+        <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+        <style>
+            .bg-gray-850 {{ background-color: #1f2937; }}
+            .bg-gray-750:hover {{ background-color: #2e3a4e; }}
+            .modal-overlay {{
+                background-color: rgba(0, 0, 0, 0.8);
+                backdrop-filter: blur(4px);
+            }}
+        </style>
+    </head>
+    <body class="bg-gray-900 text-gray-100 min-h-screen font-sans flex flex-col items-center p-8 space-y-8">
+        <!-- Login Overlay -->
+        <div id="login-overlay" class="fixed inset-0 z-50 flex items-center justify-center modal-overlay hidden">
+            <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700 max-w-md w-full mx-4">
+                <h2 class="text-2xl font-bold mb-4 text-blue-400">Authentication Required</h2>
+                <p class="text-gray-400 mb-6 text-sm">Vui lòng nhập LiteLLM API Key để truy cập dashboard này.</p>
+                <div class="space-y-4">
+                    <input type="password" id="api-key-input" placeholder="sk-..." class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none text-white">
+                    <button onclick="saveApiKey()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg transition">
+                        Enter Dashboard
+                    </button>
+                </div>
             </div>
-            """
-            error_detail = f'<span id="error-{mid}" class="text-gray-500 font-mono text-xs">-</span>'
+        </div>
 
-            html_rows += f"""
-            <tr class="hover:bg-gray-750 border-b border-gray-700 transition">
-                <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold text-blue-300">{model_name}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300 font-mono">{email}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm">{status_badge}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm"><span id="quota-{mid}" class="text-gray-500 text-xs animate-pulse">⏳ Loading...</span></td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm"><span id="health-{mid}" class="text-gray-500 text-xs animate-pulse">⏳ Counting...</span></td>
-                <td class="px-6 py-4 text-sm max-w-md">{error_detail}</td>
-            </tr>
-            """
-
-        if not html_rows:
-            html_rows = """
-            <tr>
-                <td colspan="5" class="px-6 py-8 text-center text-sm text-gray-500">
-                    Không tìm thấy tài khoản Gemini CLI nào được đăng ký trong database.
-                </td>
-            </tr>
-            """
-
-        model_ids_list = [m.model_id for m, _ in gemini_models]
-
-        return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Gemini CLI Connection Test</title>
-            <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-            <style>
-                .bg-gray-850 {{ background-color: #1f2937; }}
-                .bg-gray-750:hover {{ background-color: #2e3a4e; }}
-            </style>
-        </head>
-        <body class="bg-gray-900 text-gray-100 min-h-screen font-sans flex flex-col items-center p-8 space-y-8">
-            <div class="max-w-7xl w-full bg-gray-800 rounded-2xl shadow-2xl border border-gray-700 overflow-hidden">
-                <div class="px-8 py-6 border-b border-gray-700 flex justify-between items-center bg-gray-850">
-                    <div>
-                        <h1 class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-500">Gemini CLI Accounts Status</h1>
-                        <p class="text-xs text-gray-400 mt-1">Kiểm tra kết nối của tất cả các tài khoản Gemini CLI hiện tại</p>
-                    </div>
+        <div class="max-w-7xl w-full bg-gray-800 rounded-2xl shadow-2xl border border-gray-700 overflow-hidden">
+            <div class="px-8 py-6 border-b border-gray-700 flex justify-between items-center bg-gray-850">
+                <div>
+                    <h1 class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-500">Gemini CLI Accounts Status</h1>
+                    <p class="text-xs text-gray-400 mt-1">Kiểm tra kết nối của tất cả các tài khoản Gemini CLI hiện tại</p>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <button onclick="logout()" class="text-gray-400 hover:text-white text-xs">Logout</button>
                     <button onclick="checkAllModels()" class="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-750 text-white font-semibold py-2 px-5 rounded-lg transition transform hover:-translate-y-0.5 active:translate-y-0 text-sm flex items-center space-x-2 shadow-lg">
                         <span>Test All Connections</span>
                     </button>
                 </div>
-                <div class="overflow-x-auto">
-                    <table class="min-w-full divide-y divide-gray-700">
-                        <thead class="bg-gray-850">
-                            <tr>
-                                <th class="px-6 py-4 text-left text-xs font-bold text-gray-400 uppercase tracking-wider">Model Name</th>
-                                <th class="px-6 py-4 text-left text-xs font-bold text-gray-400 uppercase tracking-wider">Email (Organization)</th>
-                                <th class="px-6 py-4 text-left text-xs font-bold text-gray-400 uppercase tracking-wider">Status</th>
-                                <th class="px-6 py-4 text-left text-xs font-bold text-gray-400 uppercase tracking-wider">Quota</th>
-                                <th class="px-6 py-4 text-left text-xs font-bold text-gray-400 uppercase tracking-wider">Health (24h)</th>
-                                <th class="px-6 py-4 text-left text-xs font-bold text-gray-400 uppercase tracking-wider">Error Details</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-gray-700 bg-gray-800">
-                            {html_rows}
-                        </tbody>
-                    </table>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-700">
+                    <thead class="bg-gray-850">
+                        <tr>
+                            <th class="px-6 py-4 text-left text-xs font-bold text-gray-400 uppercase tracking-wider">Model Name</th>
+                            <th class="px-6 py-4 text-left text-xs font-bold text-gray-400 uppercase tracking-wider">Email (Organization)</th>
+                            <th class="px-6 py-4 text-left text-xs font-bold text-gray-400 uppercase tracking-wider">Status</th>
+                            <th class="px-6 py-4 text-left text-xs font-bold text-gray-400 uppercase tracking-wider">Quota</th>
+                            <th class="px-6 py-4 text-left text-xs font-bold text-gray-400 uppercase tracking-wider">Health (24h)</th>
+                            <th class="px-6 py-4 text-left text-xs font-bold text-gray-400 uppercase tracking-wider">Error Details</th>
+                        </tr>
+                    </thead>
+                    <tbody id="models-tbody" class="divide-y divide-gray-700 bg-gray-800">
+                        <!-- Loaded via JS -->
+                        <tr>
+                            <td colspan="6" class="px-6 py-8 text-center text-sm text-gray-500">
+                                <span class="animate-pulse">⏳ Đang tải danh sách model...</span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="px-8 py-4 bg-gray-850 border-t border-gray-700 flex justify-between items-center text-xs text-gray-500">
+                <span id="total-accounts-count">Tổng số tài khoản: 0</span>
+                <a href="/ui" class="text-blue-400 hover:text-blue-300 font-medium">← Quay lại Dashboard</a>
+            </div>
+        </div>
+
+        <!-- Tool Call Playground Section -->
+        <div class="max-w-7xl w-full bg-gray-800 rounded-2xl shadow-2xl border border-gray-700 overflow-hidden">
+            <div class="px-8 py-6 border-b border-gray-700 bg-gray-850">
+                <h2 class="text-xl font-bold text-blue-400">Tool Call Playground</h2>
+                <p class="text-xs text-gray-400 mt-1">Kiểm tra khả năng Tool Call (function calling) chuẩn Claude Code sử dụng model <b>geminicli-flash</b></p>
+            </div>
+            <div class="p-8 flex flex-col items-center justify-center space-y-6">
+                <div class="flex items-center space-x-4">
+                    <span class="text-sm font-medium text-gray-300">Model: <code class="bg-gray-700 px-2 py-1 rounded text-blue-300">geminicli-flash</code></span>
+                    <button onclick="runPlaygroundTest()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded-lg transition shadow-lg flex items-center space-x-2">
+                        <span id="playground-icon">🚀</span>
+                        <span id="playground-text">Run Tool Call Test</span>
+                    </button>
                 </div>
-                <div class="px-8 py-4 bg-gray-850 border-t border-gray-700 flex justify-between items-center text-xs text-gray-500">
-                    <span>Tổng số tài khoản: {len(gemini_models)}</span>
-                    <a href="/ui" class="text-blue-400 hover:text-blue-300 font-medium">← Quay lại Dashboard</a>
+
+                <div id="playground-result" class="w-full max-w-2xl bg-gray-900 rounded-xl p-6 border border-gray-700 hidden">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-bold text-gray-400 uppercase tracking-widest">Test Result</h3>
+                        <span id="playground-status" class="px-3 py-1 rounded-full text-xs font-bold"></span>
+                    </div>
+                    <div id="playground-details" class="text-sm font-mono text-gray-300 whitespace-pre-wrap break-all">
+                    </div>
                 </div>
             </div>
+        </div>
 
-            <!-- Tool Call Playground Section -->
-            <div class="max-w-7xl w-full bg-gray-800 rounded-2xl shadow-2xl border border-gray-700 overflow-hidden">
-                <div class="px-8 py-6 border-b border-gray-700 bg-gray-850">
-                    <h2 class="text-xl font-bold text-blue-400">Tool Call Playground</h2>
-                    <p class="text-xs text-gray-400 mt-1">Kiểm tra khả năng Tool Call (function calling) chuẩn Claude Code sử dụng model <b>geminicli-flash</b></p>
-                </div>
-                <div class="p-8 flex flex-col items-center justify-center space-y-6">
-                    <div class="flex items-center space-x-4">
-                        <span class="text-sm font-medium text-gray-300">Model: <code class="bg-gray-700 px-2 py-1 rounded text-blue-300">geminicli-flash</code></span>
-                        <button onclick="runPlaygroundTest()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded-lg transition shadow-lg flex items-center space-x-2">
-                            <span id="playground-icon">🚀</span>
-                            <span id="playground-text">Run Tool Call Test</span>
-                        </button>
-                    </div>
+        <script>
+            let modelIds = [];
+            let apiKey = sessionStorage.getItem('lite_llm_api_key');
 
-                    <div id="playground-result" class="w-full max-w-2xl bg-gray-900 rounded-xl p-6 border border-gray-700 hidden">
-                        <div class="flex items-center justify-between mb-4">
-                            <h3 class="text-sm font-bold text-gray-400 uppercase tracking-widest">Test Result</h3>
-                            <span id="playground-status" class="px-3 py-1 rounded-full text-xs font-bold"></span>
-                        </div>
-                        <div id="playground-details" class="text-sm font-mono text-gray-300 whitespace-pre-wrap break-all">
-                        </div>
-                    </div>
-                </div>
-            </div>
+            function getHeaders() {{
+                return {{
+                    'Authorization': 'Bearer ' + apiKey,
+                    'Content-Type': 'application/json'
+                }};
+            }}
 
-            <script>
-                const models = {json.dumps(model_ids_list)};
+            function saveApiKey() {{
+                const input = document.getElementById('api-key-input');
+                if (input.value) {{
+                    apiKey = input.value;
+                    sessionStorage.setItem('lite_llm_api_key', apiKey);
+                    document.getElementById('login-overlay').classList.add('hidden');
+                    init();
+                }}
+            }}
 
-                function checkAllModels() {{
-                    models.forEach(modelId => {{
-                        checkModel(modelId);
+            function logout() {{
+                sessionStorage.removeItem('lite_llm_api_key');
+                window.location.reload();
+            }}
+
+            async function init() {{
+                if (!apiKey) {{
+                    document.getElementById('login-overlay').classList.remove('hidden');
+                    return;
+                }}
+
+                try {{
+                    const resp = await fetch("/gemini_cli/status_data", {{
+                        headers: getHeaders()
                     }});
+
+                    if (resp.status === 401 || resp.status === 403) {{
+                        apiKey = null;
+                        sessionStorage.removeItem('lite_llm_api_key');
+                        document.getElementById('login-overlay').classList.remove('hidden');
+                        return;
+                    }}
+
+                    const data = await resp.json();
+                    const models = data.models || [];
+                    modelIds = models.map(m => m.model_id);
+
+                    const tbody = document.getElementById("models-tbody");
+                    document.getElementById("total-accounts-count").innerText = "Tổng số tài khoản: " + models.length;
+
+                    if (models.length === 0) {{
+                        tbody.innerHTML = `
+                            <tr>
+                                <td colspan="6" class="px-6 py-8 text-center text-sm text-gray-500">
+                                    Không tìm thấy tài khoản Gemini CLI nào được đăng ký trong database.
+                                </td>
+                            </tr>
+                        `;
+                        return;
+                    }}
+
+                    tbody.innerHTML = "";
+                    models.forEach(m => {{
+                        const row = document.createElement("tr");
+                        row.className = "hover:bg-gray-750 border-b border-gray-700 transition";
+                        row.innerHTML = `
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold text-blue-300">${{m.model_name}}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300 font-mono">${{m.email}}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                <div class="flex items-center space-x-2">
+                                    <button id="btn-${{m.model_id}}" onclick="checkModel('${{m.model_id}}')" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1 px-3 rounded-lg text-xs transition">
+                                        Test Connection
+                                    </button>
+                                    <span id="badge-${{m.model_id}}" class="hidden px-3 py-1 text-xs leading-5 font-semibold rounded-full"></span>
+                                </div>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm"><span id="quota-${{m.model_id}}" class="text-gray-500 text-xs animate-pulse">⏳ Loading...</span></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm"><span id="health-${{m.model_id}}" class="text-gray-500 text-xs animate-pulse">⏳ Counting...</span></td>
+                            <td class="px-6 py-4 text-sm max-w-md"><span id="error-${{m.model_id}}" class="text-gray-500 font-mono text-xs">-</span></td>
+                        `;
+                        tbody.appendChild(row);
+
+                        // Start individual checks
+                        checkQuota(m.model_id);
+                        checkHealth(m.model_id);
+                    }});
+                }} catch (err) {{
+                    console.error("Failed to load models", err);
+                }}
+            }}
+
+            function checkAllModels() {{
+                modelIds.forEach(id => checkModel(id));
+            }}
+
+            async function checkModel(modelId) {{
+                const btn = document.getElementById("btn-" + modelId);
+                const badge = document.getElementById("badge-" + modelId);
+                const errorSpan = document.getElementById("error-" + modelId);
+
+                if (!btn) return;
+
+                btn.disabled = true;
+                btn.innerText = "Testing...";
+                badge.classList.add("hidden");
+
+                try {{
+                    const resp = await fetch("/gemini_cli/test_one?model_id=" + encodeURIComponent(modelId), {{
+                        headers: getHeaders()
+                    }});
+                    const data = await resp.json();
+
+                    badge.classList.remove("hidden");
+                    if (data.status === "success") {{
+                        badge.innerText = "Connected";
+                        badge.className = "px-3 py-1 text-xs leading-5 font-semibold rounded-full bg-green-900 text-green-200";
+                        errorSpan.innerText = "-";
+                    }} else {{
+                        badge.innerText = "Failed";
+                        badge.className = "px-3 py-1 text-xs leading-5 font-semibold rounded-full bg-red-900 text-red-200";
+                        errorSpan.innerText = data.error || "Unknown error";
+                    }}
+                }} catch (err) {{
+                    badge.classList.remove("hidden");
+                    badge.innerText = "Error";
+                    badge.className = "px-3 py-1 text-xs leading-5 font-semibold rounded-full bg-red-900 text-red-200";
+                    errorSpan.innerText = err.message;
+                }} finally {{
+                    btn.disabled = false;
+                    btn.innerText = "Test Connection";
+                }}
+            }}
+
+            let totalCalledTools = new Set();
+
+            async function runPlaygroundTest() {{
+                const btn = document.getElementById("playground-text");
+                const icon = document.getElementById("playground-icon");
+                const resultDiv = document.getElementById("playground-result");
+                const statusBadge = document.getElementById("playground-status");
+                const details = document.getElementById("playground-details");
+
+                btn.innerText = "Running Full Audit...";
+                icon.innerText = "⏳";
+                resultDiv.classList.remove("hidden");
+                totalCalledTools.clear();
+
+                const all41 = ["Agent", "AskUserQuestion", "Bash", "CronCreate", "CronDelete", "CronList", "Edit", "EnterPlanMode", "EnterWorktree", "ExitPlanMode", "ExitWorktree", "Glob", "Grep", "ListMcpResourcesTool", "LSP", "Monitor", "NotebookEdit", "PowerShell", "PushNotification", "Read", "ReadMcpResourceTool", "RemoteTrigger", "ScheduleWakeup", "SendMessage", "ShareOnboardingGuide", "Skill", "TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate", "TeamCreate", "TeamDelete", "TodoWrite", "ToolSearch", "WaitForMcpServers", "WebFetch", "WebSearch", "Workflow", "Write"];
+
+                function updateMatrix() {{
+                    let matrixHtml = `<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 w-full mt-4">`;
+                    all41.forEach(tool => {{
+                        const isSupported = totalCalledTools.has(tool);
+                        const badgeClass = isSupported ? "bg-green-900/50 text-green-400 border-green-700" : "bg-gray-800 text-gray-500 border-gray-700 opacity-50";
+                        const icon = isSupported ? "✅" : "⏳";
+                        matrixHtml += `<div class="border rounded px-2 py-1.5 text-[10px] flex items-center justify-between ${{badgeClass}}"><span class="truncate mr-1 font-mono">${{tool}}</span><span>${{icon}}</span></div>`;
+                    }});
+                    matrixHtml += "</div>";
+
+                    details.innerHTML = `
+                        <div class="text-blue-400 font-bold mb-2">🚀 Đang thực hiện Audit 41 Tools (3 Giai đoạn)...</div>
+                        <div class="bg-gray-900/50 p-4 rounded-xl border border-gray-700">
+                            <p class="text-xs text-gray-400 mb-4 italic">Tiến độ: Đã xác nhận được <b>${{totalCalledTools.size}}</b>/41 công cụ.</p>
+                            ${{matrixHtml}}
+                        </div>
+                    `;
                 }}
 
-                // Run connection checks in parallel
-                models.forEach(modelId => {{
-                    checkQuota(modelId);
-                    checkHealth(modelId);
-                }});
+                updateMatrix();
 
-                                let totalCalledTools = new Set();
+                try {{
+                    for (let b = 1; b <= 3; b++) {{
+                        statusBadge.innerText = "BATCH " + b + "/3";
+                        statusBadge.className = "px-3 py-1 rounded-full text-xs font-bold bg-indigo-900 text-indigo-200 animate-pulse";
 
-                async function runPlaygroundTest() {{
-                    const btn = document.getElementById("playground-text");
-                    const icon = document.getElementById("playground-icon");
-                    const resultDiv = document.getElementById("playground-result");
-                    const statusBadge = document.getElementById("playground-status");
-                    const details = document.getElementById("playground-details");
-
-                    btn.innerText = "Running Full Audit...";
-                    icon.innerText = "⏳";
-                    resultDiv.classList.remove("hidden");
-                    totalCalledTools.clear();
-
-                    const all41 = ["Agent", "AskUserQuestion", "Bash", "CronCreate", "CronDelete", "CronList", "Edit", "EnterPlanMode", "EnterWorktree", "ExitPlanMode", "ExitWorktree", "Glob", "Grep", "ListMcpResourcesTool", "LSP", "Monitor", "NotebookEdit", "PowerShell", "PushNotification", "Read", "ReadMcpResourceTool", "RemoteTrigger", "ScheduleWakeup", "SendMessage", "ShareOnboardingGuide", "Skill", "TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate", "TeamCreate", "TeamDelete", "TodoWrite", "ToolSearch", "WaitForMcpServers", "WebFetch", "WebSearch", "Workflow", "Write"];
-
-                    function updateMatrix() {{
-                        let matrixHtml = `<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 w-full mt-4">`;
-                        all41.forEach(tool => {{
-                            const isSupported = totalCalledTools.has(tool);
-                            const badgeClass = isSupported ? "bg-green-900/50 text-green-400 border-green-700" : "bg-gray-800 text-gray-500 border-gray-700 opacity-50";
-                            const icon = isSupported ? "✅" : "⏳";
-                            matrixHtml += `<div class="border rounded px-2 py-1.5 text-[10px] flex items-center justify-between ${{badgeClass}}"><span class="truncate mr-1 font-mono">${{tool}}</span><span>${{icon}}</span></div>`;
+                        const resp = await fetch("/gemini_cli/tool_call_one?model_id=geminicli-flash&batch=" + b, {{
+                            headers: getHeaders()
                         }});
-                        matrixHtml += "</div>";
+                        const data = await resp.json();
 
-                        details.innerHTML = `
-                            <div class="text-blue-400 font-bold mb-2">🚀 Đang thực hiện Audit 41 Tools (3 Giai đoạn)...</div>
-                            <div class="bg-gray-900/50 p-4 rounded-xl border border-gray-700">
-                                <p class="text-xs text-gray-400 mb-4 italic">Tiến độ: Đã xác nhận được <b>${{totalCalledTools.size}}</b>/41 công cụ.</p>
-                                ${{matrixHtml}}
-                            </div>
-                        `;
+                        if (data.status === "success") {{
+                            (data.called_tools || []).forEach(t => totalCalledTools.add(t));
+                            updateMatrix();
+                        }} else {{
+                            throw new Error(data.message || data.error || "Batch " + b + " failed");
+                        }}
                     }}
 
-                    updateMatrix();
+                    statusBadge.classList.remove("animate-pulse");
+                    statusBadge.className = "px-3 py-1 rounded-full text-xs font-bold bg-green-900 text-green-200";
+                    statusBadge.innerText = "FULL AUDIT COMPLETE";
 
-                    try {{
-                        for (let b = 1; b <= 3; b++) {{
-                            statusBadge.innerText = "BATCH " + b + "/3";
-                            statusBadge.className = "px-3 py-1 rounded-full text-xs font-bold bg-indigo-900 text-indigo-200 animate-pulse";
+                    const finalNote = document.createElement("div");
+                    finalNote.className = "mt-4 text-green-400 text-xs font-bold";
+                    finalNote.innerText = "✅ Hoàn tất! Model geminicli-flash đã chứng minh khả năng gọi thành công 100% các tool được yêu cầu.";
+                    details.appendChild(finalNote);
 
-                            const resp = await fetch("/gemini_cli/tool_call_one?model_id=geminicli-flash&batch=" + b);
-                            const data = await resp.json();
+                }} catch (err) {{
+                    statusBadge.classList.remove("animate-pulse");
+                    statusBadge.className = "px-3 py-1 rounded-full text-xs font-bold bg-red-900 text-red-200";
+                    statusBadge.innerText = "AUDIT FAILED";
+                    const errorDiv = document.createElement("div");
+                    errorDiv.className = "mt-4 text-red-400 text-xs font-mono bg-black p-3 rounded";
+                    errorDiv.innerText = "Dừng Audit do lỗi: " + err.message;
+                    details.appendChild(errorDiv);
+                }} finally {{
+                    btn.innerText = "Run Full Audit Test";
+                    icon.innerText = "🚀";
+                }}
+            }}
 
-                            if (data.status === "success") {{
-                                (data.called_tools || []).forEach(t => totalCalledTools.add(t));
-                                updateMatrix();
-                            }} else {{
-                                throw new Error(data.message || data.error || "Batch " + b + " failed");
+            function formatResetTime(isoString) {{
+                const now = new Date();
+                const reset = new Date(isoString);
+                const diffMs = reset - now;
+                if (diffMs <= 0) return "Reset soon";
+                const h = Math.floor(diffMs / 3600000);
+                const m = Math.floor((diffMs % 3600000) / 60000);
+                if (h > 0) return `in ${{h}}h ${{m}}m`;
+                return `in ${{m}}m`;
+            }}
+
+            async function checkQuota(modelId) {{
+                const quotaCell = document.getElementById("quota-" + modelId);
+                if (!quotaCell) return;
+                try {{
+                    const resp = await fetch("/gemini_cli/quota_one?model_id=" + encodeURIComponent(modelId), {{
+                        headers: getHeaders()
+                    }});
+                    const data = await resp.json();
+
+                    if (!data.quota) {{
+                        const errorMsg = data.quota_error ? String(data.quota_error).replace(/</g, "&lt;").replace(/>/g, "&gt;") : "N/A";
+                        quotaCell.innerHTML = `<span class="text-red-400 text-xs truncate max-w-[120px] block" title="${{errorMsg}}">❓ ${{errorMsg}}</span>`;
+                        return;
+                    }}
+
+                    const pct = data.quota.remaining_pct;
+                    const resetAt = data.quota.reset_at;
+
+                    // Color logic: xanh >70%, vàng 30-70%, đỏ <30%
+                    const color = pct > 70 ? "green" : pct >= 30 ? "yellow" : "red";
+                    const emoji = pct > 70 ? "🟢" : pct >= 30 ? "🟡" : "🔴";
+
+                    // Progress bar + % text
+                    const resetInfo = resetAt ? formatResetTime(resetAt) : "";
+                    quotaCell.className = ""; // Remove loading pulse
+                    quotaCell.innerHTML = `
+                        <div class="flex flex-col gap-1 min-w-[120px]">
+                            <div class="flex items-center justify-between text-xs">
+                                <span>${{emoji}} ${{pct}}%</span>
+                                ${{resetInfo ? '<span class="text-gray-400">' + resetInfo + '</span>' : ''}}
+                            </div>
+                            <div class="h-1.5 rounded-full bg-gray-700 overflow-hidden">
+                                <div class="h-full bg-${{color}}-500 transition-all duration-500"
+                                     style="width: ${{Math.min(pct, 100)}}%"></div>
+                            </div>
+                        </div>
+                    `;
+                }} catch (err) {{
+                    quotaCell.innerHTML = '<span class="text-gray-500 text-xs">❌ Error</span>';
+                }}
+            }}
+
+            async function checkHealth(modelId) {{
+                const healthCell = document.getElementById("health-" + modelId);
+                if (!healthCell) return;
+                try {{
+                    const resp = await fetch("/gemini_cli/health_one?model_id=" + encodeURIComponent(modelId), {{
+                        headers: getHeaders()
+                    }});
+                    const data = await resp.json();
+
+                    if (!data.health) {{
+                        const errorMsg = data.error ? String(data.error).replace(/</g, "&lt;").replace(/>/g, "&gt;") : "N/A";
+                        healthCell.innerHTML = `<span class="text-red-400 text-xs truncate max-w-[120px] block" title="${{errorMsg}}">❓ ${{errorMsg}}</span>`;
+                        return;
+                    }}
+
+                    const success = data.health.success;
+                    const fail = data.health.fail;
+                    const total = success + fail;
+
+                    if (total === 0) {{
+                        healthCell.innerHTML = '<span class="text-gray-500 text-xs">Không có request</span>';
+                        return;
+                    }}
+
+                    const successRate = Math.round((success / total) * 100);
+                    const rateColor = successRate > 90 ? "text-green-400" : (successRate > 50 ? "text-yellow-400" : "text-red-400");
+
+                    // Build Timeline Bars
+                    let timelineHtml = '<div class="flex items-center gap-px mt-2 py-1">';
+                    if (data.timeline && data.timeline.length > 0) {{
+                        data.timeline.forEach(bucket => {{
+                            let colorClass = "bg-gray-600 opacity-30"; // No data
+                            let title = "No requests";
+
+                            if (bucket.s > 0 && bucket.f === 0) {{
+                                colorClass = "bg-green-500";
+                                title = `${{bucket.s}} success`;
+                            }} else if (bucket.f > 0 && bucket.s === 0) {{
+                                colorClass = "bg-red-500";
+                                title = `${{bucket.f}} fail`;
+                            }} else if (bucket.s > 0 && bucket.f > 0) {{
+                                colorClass = "bg-yellow-500";
+                                title = `${{bucket.s}} success, ${{bucket.f}} fail`;
                             }}
-                        }}
 
-                        statusBadge.classList.remove("animate-pulse");
-                        statusBadge.className = "px-3 py-1 rounded-full text-xs font-bold bg-green-900 text-green-200";
-                        statusBadge.innerText = "FULL AUDIT COMPLETE";
-
-                        const finalNote = document.createElement("div");
-                        finalNote.className = "mt-4 text-green-400 text-xs font-bold";
-                        finalNote.innerText = "✅ Hoàn tất! Model geminicli-flash đã chứng minh khả năng gọi thành công 100% các tool được yêu cầu.";
-                        details.appendChild(finalNote);
-
-                    }} catch (err) {{
-                        statusBadge.classList.remove("animate-pulse");
-                        statusBadge.className = "px-3 py-1 rounded-full text-xs font-bold bg-red-900 text-red-200";
-                        statusBadge.innerText = "AUDIT FAILED";
-                        const errorDiv = document.createElement("div");
-                        errorDiv.className = "mt-4 text-red-400 text-xs font-mono bg-black p-3 rounded";
-                        errorDiv.innerText = "Dừng Audit do lỗi: " + err.message;
-                        details.appendChild(errorDiv);
-                    }} finally {{
-                        btn.innerText = "Run Full Audit Test";
-                        icon.innerText = "🚀";
+                            timelineHtml += `<div class="h-5 w-1 rounded-sm ${{colorClass}} transition-all hover:scale-y-125 hover:opacity-100 cursor-pointer" title="${{title}}"></div>`;
+                        }});
                     }}
-                }}
+                    timelineHtml += '</div>';
 
-                                function formatResetTime(isoString) {{
-                    const now = new Date();
-                    const reset = new Date(isoString);
-                    const diffMs = reset - now;
-                    if (diffMs <= 0) return "Reset soon";
-                    const h = Math.floor(diffMs / 3600000);
-                    const m = Math.floor((diffMs % 3600000) / 60000);
-                    if (h > 0) return `in ${{h}}h ${{m}}m`;
-                    return `in ${{m}}m`;
-                }}
-
-                async function checkQuota(modelId) {{
-                    const quotaCell = document.getElementById("quota-" + modelId);
-                    try {{
-                        const resp = await fetch("/gemini_cli/quota_one?model_id=" + encodeURIComponent(modelId));
-                        const data = await resp.json();
-
-                        if (!data.quota) {{
-                            const errorMsg = data.quota_error ? String(data.quota_error).replace(/</g, "&lt;").replace(/>/g, "&gt;") : "N/A";
-                            quotaCell.innerHTML = `<span class="text-red-400 text-xs truncate max-w-[120px] block" title="${{errorMsg}}">❓ ${{errorMsg}}</span>`;
-                            return;
-                        }}
-
-                        const pct = data.quota.remaining_pct;
-                        const resetAt = data.quota.reset_at;
-
-                        // Color logic: xanh >70%, vàng 30-70%, đỏ <30%
-                        const color = pct > 70 ? "green" : pct >= 30 ? "yellow" : "red";
-                        const emoji = pct > 70 ? "🟢" : pct >= 30 ? "🟡" : "🔴";
-
-                        // Progress bar + % text
-                        const resetInfo = resetAt ? formatResetTime(resetAt) : "";
-                        quotaCell.className = ""; // Remove loading pulse
-                        quotaCell.innerHTML = `
-                            <div class="flex flex-col gap-1 min-w-[120px]">
-                                <div class="flex items-center justify-between text-xs">
-                                    <span>${{emoji}} ${{pct}}%</span>
-                                    ${{resetInfo ? '<span class="text-gray-400">' + resetInfo + '</span>' : ''}}
-                                </div>
-                                <div class="h-1.5 rounded-full bg-gray-700 overflow-hidden">
-                                    <div class="h-full bg-${{color}}-500 transition-all duration-500"
-                                         style="width: ${{Math.min(pct, 100)}}%"></div>
-                                </div>
+                    healthCell.className = ""; // Remove loading pulse
+                    healthCell.innerHTML = `
+                        <div class="flex flex-col gap-0.5">
+                            <div class="text-xs">
+                                <span class="text-green-400 font-semibold" title="Success">✓ ${{success}}</span>
+                                <span class="text-gray-500 mx-1">|</span>
+                                <span class="text-red-400 font-semibold" title="Failed">✗ ${{fail}}</span>
                             </div>
-                        `;
-                    }} catch (err) {{
-                        quotaCell.innerHTML = '<span class="text-gray-500 text-xs">❌ Error</span>';
-                    }}
-                }}
-
-                async function checkHealth(modelId) {{
-                    const healthCell = document.getElementById("health-" + modelId);
-                    try {{
-                        const resp = await fetch("/gemini_cli/health_one?model_id=" + encodeURIComponent(modelId));
-                        const data = await resp.json();
-
-                        if (!data.health) {{
-                            const errorMsg = data.error ? String(data.error).replace(/</g, "&lt;").replace(/>/g, "&gt;") : "N/A";
-                            healthCell.innerHTML = `<span class="text-red-400 text-xs truncate max-w-[120px] block" title="${{errorMsg}}">❓ ${{errorMsg}}</span>`;
-                            return;
-                        }}
-
-                        const success = data.health.success;
-                        const fail = data.health.fail;
-                        const total = success + fail;
-
-                        if (total === 0) {{
-                            healthCell.innerHTML = '<span class="text-gray-500 text-xs">Không có request</span>';
-                            return;
-                        }}
-
-                        const successRate = Math.round((success / total) * 100);
-                        const rateColor = successRate > 90 ? "text-green-400" : (successRate > 50 ? "text-yellow-400" : "text-red-400");
-
-                        // Build Timeline Bars
-                        let timelineHtml = '<div class="flex items-center gap-px mt-2 py-1">';
-                        if (data.timeline && data.timeline.length > 0) {{
-                            data.timeline.forEach(bucket => {{
-                                let colorClass = "bg-gray-600 opacity-30"; // No data
-                                let title = "No requests";
-
-                                if (bucket.s > 0 && bucket.f === 0) {{
-                                    colorClass = "bg-green-500";
-                                    title = `${{bucket.s}} success`;
-                                }} else if (bucket.f > 0 && bucket.s === 0) {{
-                                    colorClass = "bg-red-500";
-                                    title = `${{bucket.f}} fail`;
-                                }} else if (bucket.s > 0 && bucket.f > 0) {{
-                                    colorClass = "bg-yellow-500";
-                                    title = `${{bucket.s}} success, ${{bucket.f}} fail`;
-                                }}
-
-                                timelineHtml += `<div class="h-5 w-1 rounded-sm ${{colorClass}} transition-all hover:scale-y-125 hover:opacity-100 cursor-pointer" title="${{title}}"></div>`;
-                            }});
-                        }}
-                        timelineHtml += '</div>';
-
-                        healthCell.className = ""; // Remove loading pulse
-                        healthCell.innerHTML = `
-                            <div class="flex flex-col gap-0.5">
-                                <div class="text-xs">
-                                    <span class="text-green-400 font-semibold" title="Success">✓ ${{success}}</span>
-                                    <span class="text-gray-500 mx-1">|</span>
-                                    <span class="text-red-400 font-semibold" title="Failed">✗ ${{fail}}</span>
-                                </div>
-                                <div class="text-[10px] text-gray-400">
-                                    Tỉ lệ: <span class="${{rateColor}}">${{successRate}}%</span>
-                                </div>
-                                ${{timelineHtml}}
+                            <div class="text-[10px] text-gray-400">
+                                Tỉ lệ: <span class="${{rateColor}}">${{successRate}}%</span>
                             </div>
-                        `;
-                    }} catch (err) {{
-                        healthCell.innerHTML = '<span class="text-gray-500 text-xs">❌ Error</span>';
-                    }}
+                            ${{timelineHtml}}
+                        </div>
+                    `;
+                }} catch (err) {{
+                    healthCell.innerHTML = '<span class="text-gray-500 text-xs">❌ Error</span>';
                 }}
-            </script>
-        </body>
-        </html>
-        """
+            }}
 
-    except Exception as e:
-        from litellm._logging import verbose_proxy_logger
-
-        verbose_proxy_logger.error(f"Error in test_all_gemini_cli_connections: {str(e)}")
-        return f"<body class='bg-gray-900 text-red-400 p-8'><h1>Internal server error</h1></body>"
+            init();
+        </script>
+    </body>
+    </html>
+    """
