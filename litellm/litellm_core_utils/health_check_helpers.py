@@ -65,7 +65,14 @@ class HealthCheckHelpers:
         from litellm.proxy.litellm_pre_call_utils import LiteLLMProxyRequestSetup
 
         _metadata_variable_name = "litellm_metadata"
-        litellm_metadata = HealthCheckHelpers._get_metadata_for_health_check_call()
+        existing_metadata = (
+            model_params.get(_metadata_variable_name)
+            or model_params.get("metadata")
+            or {}
+        )
+        litellm_metadata = HealthCheckHelpers._get_metadata_for_health_check_call(
+            existing_metadata=existing_metadata
+        )
         model_params[_metadata_variable_name] = litellm_metadata
         model_params = LiteLLMProxyRequestSetup.add_user_api_key_auth_to_request_metadata(
             data=model_params,
@@ -75,15 +82,18 @@ class HealthCheckHelpers:
         return model_params
 
     @staticmethod
-    def _get_metadata_for_health_check_call():
+    def _get_metadata_for_health_check_call(existing_metadata: Optional[dict] = None):
         """
         Returns the metadata for the health check call.
         """
         from litellm.constants import LITTELM_INTERNAL_HEALTH_SERVICE_ACCOUNT_NAME
 
-        return {
-            "tags": [LITTELM_INTERNAL_HEALTH_SERVICE_ACCOUNT_NAME],
-        }
+        metadata = (existing_metadata or {}).copy()
+        tags = metadata.get("tags", [])
+        if LITTELM_INTERNAL_HEALTH_SERVICE_ACCOUNT_NAME not in tags:
+            tags.append(LITTELM_INTERNAL_HEALTH_SERVICE_ACCOUNT_NAME)
+        metadata["tags"] = tags
+        return metadata
 
     @staticmethod
     async def _batch_health_check(

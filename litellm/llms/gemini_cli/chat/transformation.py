@@ -146,6 +146,23 @@ class GeminiCLIConfig(GoogleAIStudioGeminiConfig):
             ),
         }
 
+        # Inject model_id and organization into metadata for logging
+        if litellm_params.get("metadata") is None:
+            litellm_params["metadata"] = {}
+        if litellm_params["metadata"].get("model_info") is None:
+            litellm_params["metadata"]["model_info"] = {}
+
+        model_info_obj = litellm_params.get("model_info") or {}
+
+        # litellm_params.get("model_info", {}).get("id") holds the proxy model_id
+        if "id" in model_info_obj:
+            litellm_params["metadata"]["model_info"]["id"] = model_info_obj["id"]
+
+        # Inject organization (email) so we can filter later if needed
+        org = litellm_params.get("organization") or model_info_obj.get("organization")
+        if org:
+            litellm_params["metadata"]["organization"] = org
+
         return {**validated_headers, **default_headers}
 
     def transform_response(
@@ -191,8 +208,6 @@ class GeminiCLIConfig(GoogleAIStudioGeminiConfig):
         except Exception:
             # If anything goes wrong, fall through and let the parent handle it
             pass
-
-
 
         return super().transform_response(
             model=model,

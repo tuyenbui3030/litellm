@@ -5076,3 +5076,51 @@ async def test_gemini_cli_async_response_unwrapping(mock_get_credentials):
     assert response.usage.prompt_tokens == 6
     assert response.usage.completion_tokens == 11
     assert response.usage.total_tokens == 17
+
+
+def test_vertex_ai_map_tool_choice_values_search_grounding():
+    """
+    Test that map_tool_choice_values correctly returns None for search/grounding tools,
+    so they do not populate allowed_function_names (which would cause Gemini API error).
+    """
+    from litellm.llms.vertex_ai.gemini.vertex_and_google_ai_studio_gemini import (
+        VertexGeminiConfig,
+    )
+
+    v = VertexGeminiConfig()
+
+    # Case 1: auto/none/required string choices
+    tc_none = v.map_tool_choice_values(model="gemini-1.5-pro", tool_choice="none")
+    assert tc_none["functionCallingConfig"]["mode"] == "NONE"
+
+    tc_required = v.map_tool_choice_values(
+        model="gemini-1.5-pro", tool_choice="required"
+    )
+    assert tc_required["functionCallingConfig"]["mode"] == "ANY"
+
+    tc_auto = v.map_tool_choice_values(model="gemini-1.5-pro", tool_choice="auto")
+    assert tc_auto["functionCallingConfig"]["mode"] == "AUTO"
+
+    # Case 2: Custom function tool choice (should map to ANY with allowed_function_names)
+    tc_custom = v.map_tool_choice_values(
+        model="gemini-1.5-pro",
+        tool_choice={"type": "function", "function": {"name": "get_weather"}},
+    )
+    assert tc_custom["functionCallingConfig"]["mode"] == "ANY"
+    assert tc_custom["functionCallingConfig"]["allowed_function_names"] == [
+        "get_weather"
+    ]
+
+    # Case 3: Search grounding tool choices (should map to None to bypass allowed_function_names check)
+    for search_tool in [
+        "web_search",
+        "web_search_preview",
+        "google_search",
+        "google_search_retrieval",
+        "enterprise_web_search",
+    ]:
+        tc_search = v.map_tool_choice_values(
+            model="gemini-1.5-pro",
+            tool_choice={"type": "function", "function": {"name": search_tool}},
+        )
+        assert tc_search is None, f"Expected None for search tool choice: {search_tool}"

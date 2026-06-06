@@ -258,9 +258,6 @@ class AnthropicStreamWrapper(AdapterCompletionStreamWrapper):
                 if chunk == "None" or chunk is None:
                     raise Exception
                 
-                # Print debug info to trace chunk contents
-                print(f"DEBUG RAW CHUNK: choices={getattr(chunk, 'choices', None)} usage={getattr(chunk, 'usage', None)}", flush=True)
-
                 # Check if we need to start a new content block
                 should_start_new_block = self._should_start_new_content_block(chunk)
                 if should_start_new_block:

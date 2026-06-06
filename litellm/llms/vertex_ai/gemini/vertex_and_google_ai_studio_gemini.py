@@ -358,7 +358,14 @@ class VertexGeminiConfig(VertexAIBaseConfig, BaseConfig):
             return ToolConfig(functionCallingConfig=FunctionCallingConfig(mode="AUTO"))
         elif isinstance(tool_choice, dict):
             # only supported for anthropic + mistral models - https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html
-            name = tool_choice.get("function", {}).get("name", "")
+            name = (
+                tool_choice.get("function", {}).get("name")
+                or tool_choice.get("name")
+                or tool_choice.get("tool", {}).get("name")
+                or ""
+            )
+            if name in self._search_tool_keys():
+                return None
             return ToolConfig(
                 functionCallingConfig=FunctionCallingConfig(
                     mode="ANY", allowed_function_names=[name]
@@ -380,8 +387,8 @@ class VertexGeminiConfig(VertexAIBaseConfig, BaseConfig):
         """
         return Tools(googleSearch={})
 
-    @staticmethod
-    def _search_tool_keys() -> set:
+    @classmethod
+    def _search_tool_keys(cls) -> set:
         return {
             VertexToolName.GOOGLE_SEARCH.value,
             VertexToolName.GOOGLE_SEARCH_RETRIEVAL.value,
@@ -391,6 +398,8 @@ class VertexGeminiConfig(VertexAIBaseConfig, BaseConfig):
             "google_search_retrieval",
             "enterprise_web_search",
             "urlContext",
+            "web_search",
+            "web_search_preview",
         }
 
     @classmethod

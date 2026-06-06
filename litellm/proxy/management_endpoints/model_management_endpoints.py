@@ -113,13 +113,16 @@ def update_db_model(
 
     # update litellm params
     if updated_patch.litellm_params:
-        # Encrypt any sensitive values
-        encrypted_params = {
-            k: encrypt_value_helper(v)
-            for k, v in updated_patch.litellm_params.model_dump(
-                exclude_none=True
-            ).items()
-        }
+        # Encrypt any sensitive values, skipping masked fields from the UI
+        from litellm.litellm_core_utils.sensitive_data_masker import SensitiveDataMasker
+
+        masker = SensitiveDataMasker()
+
+        encrypted_params = {}
+        for k, v in updated_patch.litellm_params.model_dump(exclude_none=True).items():
+            if isinstance(v, str) and "*" in v and masker.is_sensitive_key(k):
+                continue
+            encrypted_params[k] = encrypt_value_helper(v)
 
         merged_deployment_dict["litellm_params"].update(encrypted_params)  # type: ignore
 
@@ -1129,7 +1132,7 @@ async def add_new_model(
     tags=["model management"],
     dependencies=[Depends(user_api_key_auth)],
 )
-async def update_model(
+async def update_model(  # noqa: PLR0915
     model_params: updateDeployment,
     user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
 ):
@@ -1206,9 +1209,25 @@ async def update_model(
             )
 
             ### ENCRYPT PARAMS ###
-            for k, v in _new_litellm_params_dict.items():
+            from litellm.litellm_core_utils.sensitive_data_masker import (
+                SensitiveDataMasker,
+            )
+
+            masker = SensitiveDataMasker()
+
+            for k, v in list(_new_litellm_params_dict.items()):
+                if isinstance(v, str) and "*" in v and masker.is_sensitive_key(k):
+                    _new_litellm_params_dict.pop(k, None)
+                    if isinstance(model_params.litellm_params, dict):
+                        model_params.litellm_params.pop(k, None)
+                    else:
+                        setattr(model_params.litellm_params, k, None)
+                    continue
                 encrypted_value = encrypt_value_helper(value=v)
-                model_params.litellm_params[k] = encrypted_value
+                if isinstance(model_params.litellm_params, dict):
+                    model_params.litellm_params[k] = encrypted_value
+                else:
+                    setattr(model_params.litellm_params, k, encrypted_value)
 
             ### MERGE WITH EXISTING DATA ###
             merged_dictionary = {}

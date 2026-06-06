@@ -78,7 +78,7 @@ def get_gemini_cli_user_agent(model: str = "unknown") -> str:
         os_type = "win32"
     elif os_type == "linux":
         os_type = "linux"
-        
+
     arch = _gemini_cli_arch()
     return f"GeminiCLI/{GEMINI_CLI_VERSION}/{model} ({os_type}; {arch}; terminal)"
 

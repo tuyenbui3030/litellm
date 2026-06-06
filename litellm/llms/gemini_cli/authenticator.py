@@ -32,6 +32,7 @@ from .common_utils import (
 TOKEN_EXPIRY_SKEW_SECONDS = 60
 OAUTH_TIMEOUT_SECONDS = 120
 
+
 def generate_pkce_pair() -> Tuple[str, str]:
     verifier = secrets.token_urlsafe(32)
     sha256_hash = hashlib.sha256(verifier.encode("ascii")).digest()
@@ -42,7 +43,7 @@ def generate_pkce_pair() -> Tuple[str, str]:
 class OAuthCallbackHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed_path = urllib.parse.urlparse(self.path)
-        
+
         # 9router checks for /callback or /auth/callback
         if parsed_path.path not in ["/callback", "/auth/callback"]:
             self.send_response(404)
@@ -72,9 +73,9 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
             """
         else:
             html = f"<html><body><h1>Authentication Failed</h1><p>Error: {self.server.auth_error}</p></body></html>"  # type: ignore
-            
+
         self.wfile.write(html.encode("utf-8"))
-        
+
         # Trigger shutdown
         threading.Thread(target=self.server.shutdown).start()
 
@@ -129,14 +130,14 @@ class Authenticator:
 
         # 3. Check for auth file (For local development)
         auth_data = self._read_auth_file()
-        
+
         if auth_data:
             access_token = auth_data.get("access_token")
             project_id = auth_data.get("project_id")
-            
+
             if access_token and project_id and not self._is_token_expired(auth_data):
                 return access_token, project_id
-                
+
             refresh_token = auth_data.get("refresh_token")
             if refresh_token:
                 try:
@@ -145,17 +146,19 @@ class Authenticator:
                     # If project_id is missing, try to fetch it
                     if not project_id:
                         project_id = self._fetch_project_id(access_token)
-                    
+
                     refreshed["project_id"] = project_id
                     self._write_auth_file(refreshed)
                     return access_token, project_id
                 except Exception as exc:
                     verbose_logger.warning(
-                        "Gemini CLI credential refresh failed, re-login required: %s", exc
+                        "Gemini CLI credential refresh failed, re-login required: %s",
+                        exc,
                     )
 
         # Fallback to full login flow - only allowed in non-proxy (interactive) environments
         import litellm
+
         if getattr(litellm, "proxy_server_started", False):
             raise GetAccessTokenError(
                 message=(
@@ -174,11 +177,11 @@ class Authenticator:
         access_token = tokens["access_token"]
         project_id = self._fetch_project_id(access_token)
         tokens["project_id"] = project_id
-        
+
         self._write_auth_file(tokens)
-        
-        print(f"Successfully authenticated as project: {project_id}") # noqa: T201
-        
+
+        print(f"Successfully authenticated as project: {project_id}")  # noqa: T201
+
         return access_token, project_id
 
     def _ensure_token_dir(self) -> None:
@@ -217,12 +220,14 @@ class Authenticator:
         # This remains for local use
         port = self._find_available_port()
         redirect_uri = f"http://127.0.0.1:{port}/callback"
-        
+
         # Generate PKCE pair
         code_verifier, code_challenge = generate_pkce_pair()
-        
-        auth_url, state = self.generate_auth_url(redirect_uri, code_challenge=code_challenge)
-        
+
+        auth_url, state = self.generate_auth_url(
+            redirect_uri, code_challenge=code_challenge
+        )
+
         server = HTTPServer(("127.0.0.1", port), OAuthCallbackHandler)
         server.auth_code = None  # type: ignore
         server.auth_error = None  # type: ignore
@@ -232,34 +237,46 @@ class Authenticator:
             webbrowser.open(auth_url)
         except Exception:
             pass
-        
-        print(f"\nRemote Server detected. Please visit this URL to authenticate:\n{auth_url}\n") # noqa: T201
+
+        print(
+            f"\nRemote Server detected. Please visit this URL to authenticate:\n{auth_url}\n"
+        )  # noqa: T201
 
         # Wait for the callback
         thread = threading.Thread(target=server.serve_forever)
         thread.daemon = True
         thread.start()
-        
+
         # Wait up to timeout
         deadline = time.time() + OAUTH_TIMEOUT_SECONDS
         while time.time() < deadline:
-            if getattr(server, "auth_code", None) or getattr(server, "auth_error", None):
+            if getattr(server, "auth_code", None) or getattr(
+                server, "auth_error", None
+            ):
                 break
             time.sleep(0.5)
-        
+
         server.shutdown()
         thread.join()
-        
+
         auth_code = getattr(server, "auth_code", None)
         if not auth_code:
             # Fallback to manual input for true headless environments
-            print("Loopback timed out. Please paste the 'code' or full callback URL here:") # noqa: T201
+            print(
+                "Loopback timed out. Please paste the 'code' or full callback URL here:"
+            )  # noqa: T201
             manual_input = input("> ").strip()
-            return self.handle_callback(manual_input, redirect_uri, state, code_verifier=code_verifier)
+            return self.handle_callback(
+                manual_input, redirect_uri, state, code_verifier=code_verifier
+            )
 
-        return self._exchange_code_for_tokens(auth_code, redirect_uri, code_verifier=code_verifier)
+        return self._exchange_code_for_tokens(
+            auth_code, redirect_uri, code_verifier=code_verifier
+        )
 
-    def generate_auth_url(self, redirect_uri: str, code_challenge: Optional[str] = None) -> Tuple[str, str]:
+    def generate_auth_url(
+        self, redirect_uri: str, code_challenge: Optional[str] = None
+    ) -> Tuple[str, str]:
         state = secrets.token_urlsafe(16)
         params_dict = {
             "client_id": GEMINI_CLI_CLIENT_ID,
@@ -273,11 +290,17 @@ class Authenticator:
         if code_challenge:
             params_dict["code_challenge"] = code_challenge
             params_dict["code_challenge_method"] = "S256"
-            
+
         params = urllib.parse.urlencode(params_dict, quote_via=urllib.parse.quote)
         return f"{GEMINI_CLI_AUTHORIZE_URL}?{params}", state
 
-    def handle_callback(self, callback_input: str, redirect_uri: str, state: Optional[str] = None, code_verifier: Optional[str] = None) -> Dict[str, Any]:
+    def handle_callback(
+        self,
+        callback_input: str,
+        redirect_uri: str,
+        state: Optional[str] = None,
+        code_verifier: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Parses code from URL or raw input and exchanges for tokens"""
         code = callback_input
         if "code=" in callback_input:
@@ -287,13 +310,17 @@ class Authenticator:
             received_state = query.get("state", [None])[0]
             if state and received_state and received_state != state:
                 raise ValueError("OAuth state mismatch")
-        
-        tokens = self._exchange_code_for_tokens(code, redirect_uri, code_verifier=code_verifier)
+
+        tokens = self._exchange_code_for_tokens(
+            code, redirect_uri, code_verifier=code_verifier
+        )
         project_id = self._fetch_project_id(tokens["access_token"])
         tokens["project_id"] = project_id
         return tokens
 
-    def _exchange_code_for_tokens(self, code: str, redirect_uri: str, code_verifier: Optional[str] = None) -> Dict[str, Any]:
+    def _exchange_code_for_tokens(
+        self, code: str, redirect_uri: str, code_verifier: Optional[str] = None
+    ) -> Dict[str, Any]:
         try:
             client = _get_httpx_client()
             data = {
@@ -305,10 +332,13 @@ class Authenticator:
             }
             if code_verifier:
                 data["code_verifier"] = code_verifier
-                
+
             resp = client.post(
                 GEMINI_CLI_TOKEN_URL,
-                headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
                 data=data,
             )
             resp.raise_for_status()
@@ -329,9 +359,9 @@ class Authenticator:
                 message=f"Token exchange response missing access_token: {data}",
                 status_code=400,
             )
-            
+
         expires_in = data.get("expires_in", 3599)
-        
+
         return {
             "access_token": data["access_token"],
             "refresh_token": data.get("refresh_token"),
@@ -343,7 +373,10 @@ class Authenticator:
             client = _get_httpx_client()
             resp = client.post(
                 GEMINI_CLI_TOKEN_URL,
-                headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
                 data={
                     "grant_type": "refresh_token",
                     "refresh_token": refresh_token,
@@ -410,7 +443,7 @@ class Authenticator:
 
         project_field = data.get("cloudaicompanionProject")
         project_id = ""
-        
+
         if isinstance(project_field, str):
             project_id = project_field.strip()
         elif isinstance(project_field, dict):

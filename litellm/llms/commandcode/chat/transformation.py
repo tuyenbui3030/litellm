@@ -1,4 +1,3 @@
-import base64
 import json
 import re
 from datetime import datetime
@@ -92,7 +91,10 @@ class CommandCodeConfig(BaseConfig):
         supported_params = cls.get_supported_openai_params(model)
 
         for param, value in non_default_params.items():
-            if param in ("max_tokens", "max_completion_tokens") and "max_tokens" in supported_params:
+            if (
+                param in ("max_tokens", "max_completion_tokens")
+                and "max_tokens" in supported_params
+            ):
                 optional_params["max_tokens"] = min(value, 200_000)
             elif param in supported_params:
                 optional_params[param] = value
@@ -281,24 +283,30 @@ class CommandCodeConfig(BaseConfig):
                         match = re.match(r"data:([^;]+);base64,(.*)", image_url)
                         if match:
                             media_type, data = match.groups()
-                            parts.append({
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": media_type,
-                                    "data": data,
-                                },
-                            })
+                            parts.append(
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": media_type,
+                                        "data": data,
+                                    },
+                                }
+                            )
                         else:
-                            parts.append({
+                            parts.append(
+                                {
+                                    "type": "image",
+                                    "source": {"type": "url", "url": image_url},
+                                }
+                            )
+                    else:
+                        parts.append(
+                            {
                                 "type": "image",
                                 "source": {"type": "url", "url": image_url},
-                            })
-                    else:
-                        parts.append({
-                            "type": "image",
-                            "source": {"type": "url", "url": image_url},
-                        })
+                            }
+                        )
                 else:
                     # Unsupported content type — preserve as text fallback
                     has_multimodal = True
@@ -429,11 +437,11 @@ class CommandCodeConfig(BaseConfig):
                     "type": "function",
                     "function": {
                         "name": tc.get("toolName", ""),
-                        "arguments": json.dumps(
-                            tc.get("input", {}), ensure_ascii=False
-                        )
-                        if isinstance(tc.get("input"), (dict, list))
-                        else str(tc.get("input", "")),
+                        "arguments": (
+                            json.dumps(tc.get("input", {}), ensure_ascii=False)
+                            if isinstance(tc.get("input"), (dict, list))
+                            else str(tc.get("input", ""))
+                        ),
                     },
                 }
                 for tc in tool_calls
@@ -477,5 +485,3 @@ class CommandCodeConfig(BaseConfig):
         if reason in {"length", "max_tokens", "max-tokens", "max_output_tokens"}:
             return "length"
         return "stop"
-
-

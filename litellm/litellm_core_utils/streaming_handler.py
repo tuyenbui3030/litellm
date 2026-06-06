@@ -269,6 +269,15 @@ class CustomStreamWrapper:
         if len(self.chunks) < 2:
             return
 
+        # Ensure both last and second-to-last chunks have choices
+        if (
+            not getattr(self.chunks[-1], "choices", None)
+            or len(self.chunks[-1].choices) == 0
+            or not getattr(self.chunks[-2], "choices", None)
+            or len(self.chunks[-2].choices) == 0
+        ):
+            return
+
         last_content = self.chunks[-1].choices[0].delta.content
 
         if (
