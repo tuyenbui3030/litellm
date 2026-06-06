@@ -1,0 +1,16 @@
+services:
+  litellm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        target: runtime
+    volumes:
+      - ./litellm:/app/litellm
+      - ./enterprise:/app/enterprise
+      - ./litellm-proxy-extras:/app/litellm-proxy-extras
+    command:
+      - "--config=/app/proxy_server_config.yaml"
+      - "--reload"
+    environment:
+      - PYTHONASYNCIODEBUG=1
