@@ -1,16 +1,24 @@
 services:
   litellm:
-    # build:
-    #   context: .
-    #   dockerfile: Dockerfile
-    #   args:
-    #     target: runtime
-    image: ghcr.io/berriai/litellm:main-latest # Hoặc image bạn tự build
-    container_name: litellm-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        target: runtime
+    #########################################
+    ## Uncomment these lines to start proxy with a config.yaml file ##
     volumes:
       - ./proxy_server_config.yaml:/app/proxy_server_config.yaml
+      
+      ## --- DEVELOPMENT HOT-RELOAD ---
+      ## Mount local source code for instant updates without rebuilding
+      - ./litellm:/app/litellm
+      - ./enterprise:/app/enterprise
+      - ./litellm-proxy-extras:/app/litellm-proxy-extras
     command:
       - "--config=/app/proxy_server_config.yaml"
+      - "--reload" # Enable uvicorn hot reload
+    ##############################################
     ports:
       - "4000:4000" # Map the container port to the host, change the host port if necessary
     environment:
